@@ -1,0 +1,9 @@
+{
+  "version" : 1,
+  "indentConditionalCompilationBlocks" : false,
+  "rules" : {
+    "AllPublicDeclarationsHaveDocumentation" : true,
+    "NeverForceUnwrap" : true,
+    "NeverUseForceTry" : true
+  }
+}

@@ -1,0 +1,173 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least-privilege GITHUB_TOKEN plus the scopes deploy-pages needs to publish.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One Pages publish in flight at a time; never cancel a running deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build DocC site
+    runs-on: macos-26
+    # Every job in this repository is bounded, so a hang fails the job instead of sitting for the
+    # six-hour default. The ceiling is that job's slowest green run on `main` under its current
+    # definition, rounded up to the next five minutes and then tripled. `Scripts/verify.sh` holds
+    # the rule that every job has one.
+    # Slowest green run 2m01s.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      # Names the schemes SwiftPM generated, so a scheme rename shows up here rather than as an
+      # unexplained failure in the per-product builds below.
+      - name: List schemes
+        run: xcodebuild -list
+
+      # Built one product at a time rather than through the whole-package scheme, because the
+      # URLSession transport and the test types have to be told where HTTPCore's documentation is
+      # before their own links to it can resolve. DocC does not reach into another module on its own: the source writes
+      # ``HTTPCore/TransportError`` in HTTPURLSession's doc comments, and without the two flags below
+      # DocC reads `HTTPCore` as a member of the enclosing type, finds nothing, and renders the link as
+      # plain text. The flags are experimental, so a toolchain bump can rename them; the pass order is
+      # the dependency order: HTTPCore is built first and publishes link metadata, then the two
+      # products that depend on it resolve against that archive.
+      #
+      # Destination and simulator OS mirror ci.yml's apple lane; see the note there on why it is the
+      # lowest runtime the image carries. -derivedDataPath pins where the archives land.
+      # Its own derived data, because building either dependent product builds HTTPCore's documentation
+      # again as part of the same graph. Sharing one directory would have the second pass rewriting the
+      # very archive it was told to resolve against.
+      - name: Build HTTPCore documentation
+        run: |
+          set -o pipefail
+          xcodebuild docbuild \
+            -scheme HTTPCore \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.2' \
+            -derivedDataPath .derivedData-core \
+            -skipPackagePluginValidation \
+            OTHER_DOCC_FLAGS='--enable-experimental-external-link-support' \
+            | xcbeautify --renderer github-actions
+
+      # Lifted out of derived data entirely, so the path handed to --dependency belongs to nothing that
+      # a later build writes to. This copy is also what the merge step reads: it is the archive the
+      # dependent products actually resolved against.
+      - name: Stage HTTPCore archive
+        id: core
+        run: |
+          set -euo pipefail
+          found="$(find .derivedData-core -type d -name 'HTTPCore.doccarchive' | head -1)"
+          if [ -z "$found" ]; then
+            echo "::error::no HTTPCore.doccarchive under .derivedData-core"
+            exit 1
+          fi
+          mkdir -p .docc-deps
+          cp -R "$found" .docc-deps/HTTPCore.doccarchive
+          if [ ! -f .docc-deps/HTTPCore.doccarchive/linkable-entities.json ]; then
+            echo "::error::HTTPCore.doccarchive carries no link metadata; the flag did not take"
+            exit 1
+          fi
+          echo "archive=$PWD/.docc-deps/HTTPCore.doccarchive" >> "$GITHUB_OUTPUT"
+
+      # Both dependent products resolve against HTTPCore's staged archive, and publish their own link
+      # metadata too so the set stays symmetrical if something later needs to link into one of them.
+      - name: Build dependent product documentation
+        run: |
+          set -o pipefail
+          for scheme in HTTPURLSession HTTPTesting; do
+            xcodebuild docbuild \
+              -scheme "$scheme" \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.2' \
+              -derivedDataPath .derivedData \
+              -skipPackagePluginValidation \
+              OTHER_DOCC_FLAGS="--enable-experimental-external-link-support --dependency ${{ steps.core.outputs.archive }}" \
+              | xcbeautify --renderer github-actions
+          done
+
+      # Three products means three archives. A merged archive gets a synthesized landing page at
+      # /documentation/ that lists all three modules, so one site covers the whole package.
+      - name: Merge archives
+        run: |
+          set -euo pipefail
+          archives=(.docc-deps/HTTPCore.doccarchive)
+          for module in HTTPURLSession HTTPTesting; do
+            found="$(find .derivedData -type d -name "${module}.doccarchive" | head -1)"
+            if [ -z "$found" ]; then
+              echo "::error::no ${module}.doccarchive under .derivedData"
+              exit 1
+            fi
+            archives+=("$found")
+          done
+          "$(xcrun --find docc)" merge "${archives[@]}" \
+            --synthesized-landing-page-name swifty-networking \
+            --synthesized-landing-page-kind Package \
+            --output-path .merged.doccarchive
+
+      # Rewrite the archive for static hosting under the Pages sub-path
+      # (site serves from https://<owner>.github.io/swifty-networking/).
+      - name: Transform for static hosting
+        run: |
+          set -euo pipefail
+          "$(xcrun --find docc)" process-archive transform-for-static-hosting \
+            .merged.doccarchive \
+            --output-path _site \
+            --hosting-base-path swifty-networking
+
+      # DocC's static-hosting output has no landing page at the site root: the bare index.html is an
+      # app shell that keeps baseUrl "/" (so its assets 404 under the Pages sub-path) and has no route
+      # to render. Replace it with a redirect into the merged landing route so the bare URL works.
+      - name: Write root redirect
+        run: |
+          set -euo pipefail
+          cat > _site/index.html <<'HTML'
+          <!DOCTYPE html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta http-equiv="refresh" content="0; url=documentation/">
+              <link rel="canonical" href="https://kalebcooper.github.io/swifty-networking/documentation/">
+              <title>swifty-networking</title>
+            </head>
+            <body>
+              <p>Redirecting to the <a href="documentation/">swifty-networking documentation</a>…</p>
+            </body>
+          </html>
+          HTML
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    # Only main publishes. A workflow_dispatch on any other ref builds and stops, so an experiment
+    # cannot overwrite the live site.
+    if: github.ref == 'refs/heads/main'
+    # Slowest green run 0m11s; the job is a single action call.
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

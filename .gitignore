@@ -1,0 +1,22 @@
+.DS_Store
+/.build
+/.build-default
+/Packages
+/*.xcodeproj
+xcuserdata/
+*.xcuserstate
+DerivedData/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
+
+# Local planning docs, not part of the published repo.
+/plans/
+
+# Repo-local agent instructions, skills, and design notes stay out of version control for now.
+# A curated skills plugin will ship separately later, the way ResponsiveLayoutKit's does.
+/AGENTS.md
+/CLAUDE.md
+/.claude/
+/*_BULLETS.md
+/KNOWN_GAPS.md
