@@ -61,11 +61,6 @@ private func accepting(_ tokens: String...)
   }
 }
 
-/// The `Authorization` values the transport saw, in send order; `nil` where a request carried none.
-private func authorizations(of transport: MockTransport) -> [String?] {
-  transport.requests.map { $0.request.headerFields[.authorization] }
-}
-
 private let path = "/me"
 private let anonymous = Request(options: RequestOptions(requiresAuth: false), path: path)
 
@@ -346,6 +341,21 @@ struct HTTPClientReplayTests {
       authorizations(of: transport) == [
         "Bearer t1", "Bearer t2", "Bearer t2", "Bearer t2", "Bearer t2",
       ])
+  }
+
+  @Test("a 401 on the base's origin with no token held refreshes once and replays with the new one")
+  func refreshesAndReplaysWithNoTokenHeld() async throws {
+    let tokens = RecordingTokenProvider(refreshOutcomes: [.success("t2")])
+    let transport = MockTransport(results: [
+      .success(.empty(status: .unauthorized)), .success(.empty()),
+    ])
+    let client = makeClient(
+      authentication: Authentication(provider: tokens, refresher: tokens), transport: transport)
+
+    try await client.executeExpectingNoContent(Request(path: path))
+
+    #expect(tokens.refreshes == 1)
+    #expect(authorizations(of: transport) == [nil, "Bearer t2"])
   }
 
   @Test("a 401 under a scheme other than bearer refreshes once and replays in the same field")

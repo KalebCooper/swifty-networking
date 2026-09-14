@@ -56,8 +56,9 @@ public struct Authentication: Sendable {
   /// ```
   ///
   /// Whichever scheme renders it, the credential goes out only on a request whose
-  /// ``RequestOptions/requiresAuth`` is `true`, a `401` earns the same one refresh and one replay,
-  /// and a hop to another origin is sent without the field the client attached.
+  /// ``RequestOptions/requiresAuth`` is `true`, a `401` earns the same one refresh and one replay
+  /// whenever some send in the chain reached the base's origin, and a hop to another origin is
+  /// sent without the field, whoever set it.
   public enum Scheme: Hashable, Sendable {
     /// Writes `Basic <token>` into the `Authorization` field.
     ///
@@ -157,9 +158,13 @@ public struct Authentication: Sendable {
 
   /// A Boolean value that indicates whether a `401` response triggers one refresh and one replay.
   ///
-  /// The replay happens at most once per logical request. A second `401` reaches you as
-  /// ``TransportError/httpStatus(body:code:headers:)``. Set this to `false` for a server whose
-  /// `401` means something other than an expired credential.
+  /// A `401` earns it whenever some send in the chain that produced it reached the base's origin,
+  /// a redirect to another origin or a lazy login included; a chain that never reached the base's
+  /// origin returns the `401` as ``TransportError/httpStatus(body:code:headers:)`` without a
+  /// refresh, since a fresh credential would not have gone out on it either. The replay happens at
+  /// most once per logical request. A
+  /// second `401` reaches you as ``TransportError/httpStatus(body:code:headers:)``. Set this to
+  /// `false` for a server whose `401` means something other than an expired credential.
   public var replayOn401: Bool
 
   /// How the credential is rendered into a request's header fields.

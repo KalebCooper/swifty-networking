@@ -148,18 +148,19 @@ and without the `Content-Type` and `Content-Length` fields that described one, a
 `HEAD`; a `307` or `308` keeps the method, the body, and every field. Twenty hops are followed, and
 the twenty-first `3xx` is returned.
 
-A hop to another origin, under ``RedirectPolicy/follow``, goes out without the field the client
-attached from ``HTTPClient/authentication``, whichever field ``Authentication/scheme`` names, so a
-credential meant for one host never reaches another; a field you set yourself in
-``HTTPClient/defaultHeaders`` or on the request travels as you wrote it.
+A hop to another origin, under ``RedirectPolicy/follow``, goes out without `Authorization`,
+`Cookie`, `Proxy-Authorization`, and the field ``Authentication/scheme`` names, whether you set the
+field yourself, set it in ``HTTPClient/defaultHeaders``, or the client attached it, so a credential
+meant for one host never reaches another. Every other field travels as you wrote it.
 
 Each hop is a send: the ``HTTPClient/observer`` sees ``TransportObserver/willSend(_:)`` and
 ``TransportObserver/didReceive(_:)`` for every one, under the same attempt ordinal, and the duration
 each carries is that hop's own. The `3xx` body is never read, and on ``HTTPClient/stream(_:)``
 dropping it cancels whatever was still fetching it. A `401` at the end of a chain earns the same
-refresh and replay as any other, and the replay sends the request as you wrote it, following the
-chain again with the new credential. A ``RequestOptions/coalescingKey`` and a ``HTTPClient/timeout``
-cover the whole chain.
+refresh and replay as any other whenever some send in the chain reached the base's origin, and the
+replay sends the request as you wrote it, following the chain again with the new credential. A `401`
+ending a chain that never reached the base's origin is the status failure, without a refresh. A
+``RequestOptions/coalescingKey`` and a ``HTTPClient/timeout`` cover the whole chain.
 
 ## Coalescing
 

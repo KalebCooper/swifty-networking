@@ -35,11 +35,6 @@ private func isCancelled(_ error: TransportError?) -> Bool {
   if case .some(.cancelled) = error { true } else { false }
 }
 
-/// The status code of a status failure.
-private func statusCode(_ error: TransportError?) -> Int? {
-  if case .some(.httpStatus(body: _, code: let code, headers: _)) = error { code } else { nil }
-}
-
 /// The kind of a transport failure.
 private func transportKind(_ error: TransportError?) -> TransportFailureKind? {
   if case .some(.transport(kind: let kind, underlying: _)) = error { kind } else { nil }

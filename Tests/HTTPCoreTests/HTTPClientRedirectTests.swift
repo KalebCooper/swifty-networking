@@ -28,29 +28,10 @@ private func makeClient(
   )
 }
 
-/// A redirect carrying `location`, with a body a follower must never read.
-private func redirect(_ code: Int, to location: String?) -> Response {
-  var headers: HTTPFields = [:]
-  if let location { headers[.location] = location }
-  return Response(
-    body: Data("<html>moved</html>".utf8), headers: headers, status: HTTPResponse.Status(code: code)
-  )
-}
-
 /// The `Location` field a status failure carries, or `nil` for any other failure.
 private func location(of error: TransportError?) -> String? {
   guard case .httpStatus(body: _, code: _, headers: let headers)? = error else { return nil }
   return headers[.location]
-}
-
-/// The `:path` of every request the transport saw, in send order.
-private func paths(of transport: MockTransport) -> [String?] {
-  transport.requests.map { $0.request.path }
-}
-
-/// The `Authorization` values the transport saw, in send order; `nil` where a request carried none.
-private func authorizations(of transport: MockTransport) -> [String?] {
-  transport.requests.map { $0.request.headerFields[.authorization] }
 }
 
 private let elsewhere = "https://other.example.com/x"
@@ -157,8 +138,8 @@ struct HTTPClientRedirectTests {
     #expect(calls.last?.request.path == "/done")
   }
 
-  @Test("the fields the caller set travel with every hop, and a custom one crosses origins")
-  func callerFieldsTravel() async throws {
+  @Test("a cross-origin hop withholds a default Authorization and keeps a default Accept")
+  func aCrossOriginHopWithholdsADefaultAuthorization() async throws {
     let transport = MockTransport(results: [
       .success(redirect(302, to: elsewhere)),
       .success(.empty()),
@@ -169,10 +150,106 @@ struct HTTPClientRedirectTests {
 
     try await client.executeExpectingNoContent(Request(path: "/things"))
 
-    #expect(authorizations(of: transport) == ["Basic abc", "Basic abc"])
+    #expect(authorizations(of: transport) == ["Basic abc", nil])
     #expect(
       transport.requests.map { $0.request.headerFields[.accept] }
         == ["application/json", "application/json"])
+  }
+
+  @Test(
+    "a cross-origin hop withholds the caller's Authorization, Cookie, and Proxy-Authorization and keeps the rest"
+  )
+  func aCrossOriginHopWithholdsCallerCredentialFields() async throws {
+    let trace = try #require(HTTPField.Name("X-Trace"))
+    let transport = MockTransport(results: [
+      .success(redirect(302, to: elsewhere)),
+      .success(.empty()),
+    ])
+    let client = makeClient(transport: transport)
+
+    try await client.executeExpectingNoContent(
+      Request(
+        headers: [
+          .authorization: "Basic abc", .cookie: "session=1", .proxyAuthorization: "Basic proxy",
+          trace: "abc",
+        ],
+        path: "/things"))
+
+    let sent = transport.requests.map(\.request.headerFields)
+    try #require(sent.count == 2)
+    #expect(sent[0][.authorization] == "Basic abc")
+    #expect(sent[0][.cookie] == "session=1")
+    #expect(sent[0][.proxyAuthorization] == "Basic proxy")
+    #expect(sent[1][.authorization] == nil)
+    #expect(sent[1][.cookie] == nil)
+    #expect(sent[1][.proxyAuthorization] == nil)
+    #expect(sent.map { $0[trace] } == ["abc", "abc"])
+  }
+
+  @Test(
+    "a cross-origin hop withholds every copy of a default credential field, in any letter case",
+    arguments: ["Authorization", "Cookie", "Proxy-Authorization"] as [String]
+  )
+  func aCrossOriginHopWithholdsEveryCopyOfACredentialField(name: String) async throws {
+    let field = try #require(HTTPField.Name(name))
+    let shouted = try #require(HTTPField.Name(name.uppercased()))
+    let transport = MockTransport(results: [
+      .success(redirect(302, to: elsewhere)),
+      .success(.empty()),
+    ])
+    let client = makeClient(
+      defaultHeaders: HTTPFields([
+        HTTPField(name: field, value: "one"),
+        HTTPField(name: field, value: "two"),
+        HTTPField(name: shouted, value: "three"),
+      ]),
+      transport: transport)
+
+    try await client.executeExpectingNoContent(Request(path: "/things"))
+
+    let sent = transport.requests.map(\.request.headerFields)
+    try #require(sent.count == 2)
+    #expect(sent[0][values: field] == ["one", "two", "three"])
+    #expect(sent[1][values: field] == [])
+    #expect(sent[1][values: shouted] == [])
+  }
+
+  @Test("a hop that comes back to the base's origin carries the caller's Authorization again")
+  func aHopBackOnTheBasesOriginCarriesTheCallerAuthorization() async throws {
+    let transport = MockTransport(results: [
+      .success(redirect(302, to: elsewhere)),
+      .success(redirect(302, to: "https://api.example.com/back")),
+      .success(.empty()),
+    ])
+    let client = makeClient(transport: transport)
+
+    try await client.executeExpectingNoContent(
+      Request(headers: [.authorization: "Basic abc"], path: "/things"))
+
+    #expect(paths(of: transport) == ["/things", "/x", "/back"])
+    #expect(authorizations(of: transport) == ["Basic abc", nil, "Basic abc"])
+  }
+
+  @Test("a same-origin hop keeps every field the caller set")
+  func aSameOriginHopKeepsEveryCallerField() async throws {
+    let trace = try #require(HTTPField.Name("X-Trace"))
+    let fields: HTTPFields = [
+      .authorization: "Basic abc", .cookie: "session=1", .proxyAuthorization: "Basic proxy",
+      trace: "abc",
+    ]
+    let transport = MockTransport(results: [
+      .success(redirect(302, to: "/things/2")),
+      .success(.empty()),
+    ])
+    let client = makeClient(transport: transport)
+
+    try await client.executeExpectingNoContent(Request(headers: fields, path: "/things"))
+
+    let sent = transport.requests.map(\.request.headerFields)
+    try #require(sent.count == 2)
+    for name in [HTTPField.Name.authorization, .cookie, .proxyAuthorization, trace] {
+      #expect(sent[1][name] == fields[name])
+    }
   }
 }
 
@@ -261,6 +338,82 @@ struct HTTPClientRedirectCredentialTests {
     #expect(tokens.refreshes == 1)
     #expect(paths(of: transport) == ["/old", "/new", "/old", "/new"])
     #expect(authorizations(of: transport) == ["Bearer t1", "Bearer t1", "Bearer t2", "Bearer t2"])
+  }
+
+  @Test(
+    "a base send redirected to another origin that answers 401 refreshes once and replays from the base"
+  )
+  func aCrossOrigin401AfterABaseSendReplays() async throws {
+    let tokens = RecordingTokenProvider(refreshOutcomes: [.success("t2")], token: "t1")
+    let transport = MockTransport()
+    transport.setHandler(forPath: "/old") { request in
+      guard request.headerFields[.authorization] == "Bearer t2" else {
+        return .success(MockTransport.Answer(redirect(302, to: "https://login.example.com/login")))
+      }
+      return .success(MockTransport.Answer(.empty()))
+    }
+    transport.setHandler(forPath: "/login") { _ in
+      .success(MockTransport.Answer(.empty(status: .unauthorized)))
+    }
+    let client = makeClient(
+      authentication: Authentication(provider: tokens, refresher: tokens), transport: transport)
+
+    try await client.executeExpectingNoContent(Request(path: "/old"))
+
+    #expect(tokens.refreshes == 1)
+    #expect(paths(of: transport) == ["/old", "/login", "/old"])
+    #expect(
+      transport.requests.map(\.request.authority)
+        == ["api.example.com", "login.example.com", "api.example.com"])
+    #expect(authorizations(of: transport) == ["Bearer t1", nil, "Bearer t2"])
+  }
+
+  @Test(
+    "a base send redirected to another origin that answers 401 twice refreshes once and throws the 401"
+  )
+  func aCrossOrigin401OnTheReplayIsThrown() async throws {
+    let tokens = RecordingTokenProvider(refreshOutcomes: [.success("t2")], token: "t1")
+    let transport = MockTransport(results: [
+      .success(redirect(302, to: elsewhere)),
+      .success(.empty(status: .unauthorized)),
+      .success(redirect(302, to: elsewhere)),
+      .success(.empty(status: .unauthorized)),
+    ])
+    let client = makeClient(
+      authentication: Authentication(provider: tokens, refresher: tokens), transport: transport)
+
+    let error = await failure {
+      try await client.executeExpectingNoContent(Request(path: "/old"))
+    }
+
+    #expect(statusCode(error) == 401)
+    #expect(tokens.refreshes == 1)
+    #expect(paths(of: transport) == ["/old", "/x", "/old", "/x"])
+    #expect(authorizations(of: transport) == ["Bearer t1", nil, "Bearer t2", nil])
+  }
+
+  @Test(
+    "a cross-origin hop withholds a custom scheme's field, whether the caller or the client set it")
+  func aCrossOriginHopWithholdsTheCustomSchemeField() async throws {
+    let key = try #require(HTTPField.Name("X-API-Key"))
+    let transport = MockTransport(results: [
+      .success(redirect(302, to: elsewhere)),
+      .success(.empty()),
+      .success(redirect(302, to: elsewhere)),
+      .success(.empty()),
+    ])
+    let client = makeClient(
+      authentication: Authentication(
+        provider: RecordingTokenProvider(token: "k1"), scheme: .field(key)),
+      defaultHeaders: [key: "caller"],
+      transport: transport)
+
+    try await client.executeExpectingNoContent(Request(path: "/things"))
+    try await client.executeExpectingNoContent(
+      Request(options: RequestOptions(requiresAuth: false), path: "/things"))
+
+    #expect(paths(of: transport) == ["/things", "/x", "/things", "/x"])
+    #expect(transport.requests.map { $0.request.headerFields[key] } == ["k1", nil, "caller", nil])
   }
 }
 

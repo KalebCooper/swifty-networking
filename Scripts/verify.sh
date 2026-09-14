@@ -289,16 +289,31 @@ check_nothing_local_tracked() {
   if [ -z "$hits" ]; then pass "$name"; else fail "$name"; printf '%s\n' "$hits"; fi
 }
 
-# Prohibition. The format gate. An absent tool is a failure, never a skip. Not self-tested: it needs
-# the toolchain and its rules are swift-format's to prove.
+# The image the CI lint lane runs in. The lint runs inside it rather than on the host, because
+# swift-format's rules move between toolchains: a finding the CI formatter reports can be one a
+# host formatter of another version does not, and a gate that passes on a formatter CI does not run
+# proves nothing about the lane. Keep it in step with `Scripts/linux-test.sh` and `ci.yml`.
+readonly FORMAT_IMAGE="swift:6.3-noble"
+
+# Prohibition. The format gate, run with the CI lane's formatter in its container, the tree mounted
+# read-only. An absent or stopped Docker is a failure, never a skip.
 check_format() {
-  local name="swift format lint --strict reports zero findings"
-  if ! command -v swift >/dev/null 2>&1; then fail "$name (swift toolchain not found)"; return; fi
-  if (cd "$ROOT" && swift format lint --strict --recursive Sources Tests >/dev/null 2>&1); then
+  local name="swift format lint --strict reports zero findings in $FORMAT_IMAGE"
+  local output
+  if ! command -v docker >/dev/null 2>&1; then
+    fail "$name (docker not found; install Docker Desktop, the lint runs in the CI image)"
+    return
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    fail "$name (docker is not running; start Docker Desktop, the lint runs in the CI image)"
+    return
+  fi
+  if output=$(docker run --rm --volume "$ROOT:/workspace:ro" --workdir /workspace "$FORMAT_IMAGE" \
+    swift format lint --strict --recursive Sources Tests 2>&1); then
     pass "$name"
   else
     fail "$name"
-    (cd "$ROOT" && swift format lint --strict --recursive Sources Tests 2>&1 | head -40)
+    printf '%s\n' "$output" | head -40
   fi
 }
 
@@ -318,12 +333,12 @@ SELF_TESTABLE=(
   check_swift_testing_only
   check_job_timeouts
   check_suite_time_limit
+  check_format
 )
 
 run_all() {
   for check in "${SELF_TESTABLE[@]}"; do "$check"; done
   check_nothing_local_tracked
-  check_format
 }
 
 # ---------------------------------------------------------------------------------------------------
@@ -451,6 +466,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 EOF
+  # The format check reads the tree's own configuration, so the tree carries the rule its planted
+  # violation breaks, and the repository's unindented `#if` blocks, which every file above is written in.
+  printf '{\n  "indentConditionalCompilationBlocks": false,\n  "rules": {\n    "NeverForceUnwrap": true\n  },\n  "version": 1\n}\n' > "$d/.swift-format"
   printf '# Readme\n' > "$d/README.md"
   printf '# Changelog\n' > "$d/CHANGELOG.md"
   printf '# Contributing\n' > "$d/CONTRIBUTING.md"
@@ -501,6 +519,11 @@ plant_violation() {
       printf 'name: Extra\n\non:\n  push:\n\njobs:\n  stray:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n' > "$d/.github/workflows/extra.yml" ;;
     check_suite_time_limit)
       printf 'import Testing\n\n@Suite struct UnboundedTests {\n  @Test func aTestRuns() {\n    #expect(true)\n  }\n}\n' > "$d/Tests/HTTPCoreTests/UnboundedTests.swift" ;;
+    # A force-unwrap in a suite's helper method, the shape a host formatter of another version can
+    # miss. It sits in a helper rather than in the test itself, because the rule does not read a
+    # function marked `@Test`.
+    check_format)
+      printf 'import Testing\n\n@Suite struct UnwrapTests {\n  private func value() -> Int {\n    Int("1")!\n  }\n\n  @Test func aValueUnwraps() {\n    #expect(value() == 1)\n  }\n}\n' > "$d/Tests/HTTPCoreTests/UnwrapTests.swift" ;;
   esac
 }
 

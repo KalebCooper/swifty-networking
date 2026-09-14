@@ -87,63 +87,65 @@ private let b = ServerSentEvent(data: "b")
 
 @Suite("SSEDecoder", .timeLimit(.minutes(suiteTimeLimitMinutes)))
 struct SSEDecoderTests {
+  private static let goldenCases: [(input: String, expected: [ServerSentEvent])] = [
+    ("data: a\n\n", [a]),
+    ("data: a\n\ndata: b\n\n", [a, b]),
+    // The value is the rest of the line, colons in it included.
+    ("data: a: b\n\n", [ServerSentEvent(data: "a: b")]),
+    // Exactly one space after the colon is framing; a second one is the value's own.
+    ("data:a\n\n", [a]),
+    ("data:  a\n\n", [ServerSentEvent(data: " a")]),
+    // Several data fields are one event's data, joined by a line feed.
+    ("data: a\ndata: b\n\n", [ServerSentEvent(data: "a\nb")]),
+    ("data: a\r\ndata: b\r\n\r\n", [ServerSentEvent(data: "a\nb")]),
+    // A carriage return that is not part of a terminator is data, and survives the join.
+    ("data: a\r\r\n\r\n", [ServerSentEvent(data: "a\r")]),
+    // A line beginning with a colon is a comment, bare keep-alives included.
+    (":\n: keep-alive\ndata: a\n\n", [a]),
+    // A line with no colon is a field of that name carrying an empty value.
+    ("data\n\n", [ServerSentEvent(data: "")]),
+    ("data:\n\n", [ServerSentEvent(data: "")]),
+    // A frame with no data field dispatches nothing.
+    ("", []),
+    ("\n\n\n", []),
+    ("event: ping\n\n", []),
+    (": comment\n\n", []),
+    // An unknown field name is ignored.
+    ("unknown: x\ndata: a\n\n", [a]),
+    // The event type is the frame's own, and does not carry into the next frame.
+    ("event: update\ndata: a\n\n", [ServerSentEvent(data: "a", event: "update")]),
+    ("event: update\ndata: a\n\ndata: b\n\n", [ServerSentEvent(data: "a", event: "update"), b]),
+    // The id belongs to the stream and carries into later frames.
+    (
+      "id: 1\ndata: a\n\ndata: b\n\n",
+      [
+        ServerSentEvent(data: "a", id: "1"), ServerSentEvent(data: "b", id: "1"),
+      ]
+    ),
+    // An id field with an empty value clears it, which reads back as no id at all.
+    ("id: 1\ndata: a\n\nid\ndata: b\n\n", [ServerSentEvent(data: "a", id: "1"), b]),
+    // An id carrying a null is ignored, and leaves the one already in force.
+    (
+      "id: 1\ndata: a\n\nid: 2\u{0}\ndata: b\n\n",
+      [
+        ServerSentEvent(data: "a", id: "1"), ServerSentEvent(data: "b", id: "1"),
+      ]
+    ),
+    // A retry that is not a whole number of milliseconds, or is too large to represent, is ignored.
+    ("retry: 3000\ndata: a\n\n", [ServerSentEvent(data: "a", retry: .milliseconds(3000))]),
+    ("retry: 3s\ndata: a\n\n", [a]),
+    ("retry:\ndata: a\n\n", [a]),
+    ("retry: 99999999999999999999\ndata: a\n\n", [a]),
+    // A frame of nothing but a retry dispatches no event, and the value reaches the next one.
+    ("retry: 3000\n\ndata: a\n\n", [ServerSentEvent(data: "a", retry: .milliseconds(3000))]),
+    // A frame the stream ended in the middle of is discarded.
+    ("data: a\n\ndata: b\n", [a]),
+    ("data: a", []),
+  ]
+
   @Test(
     "a blank line dispatches what the fields before it add up to",
-    arguments: [
-      ("data: a\n\n", [a]),
-      ("data: a\n\ndata: b\n\n", [a, b]),
-      // The value is the rest of the line, colons in it included.
-      ("data: a: b\n\n", [ServerSentEvent(data: "a: b")]),
-      // Exactly one space after the colon is framing; a second one is the value's own.
-      ("data:a\n\n", [a]),
-      ("data:  a\n\n", [ServerSentEvent(data: " a")]),
-      // Several data fields are one event's data, joined by a line feed.
-      ("data: a\ndata: b\n\n", [ServerSentEvent(data: "a\nb")]),
-      ("data: a\r\ndata: b\r\n\r\n", [ServerSentEvent(data: "a\nb")]),
-      // A carriage return that is not part of a terminator is data, and survives the join.
-      ("data: a\r\r\n\r\n", [ServerSentEvent(data: "a\r")]),
-      // A line beginning with a colon is a comment, bare keep-alives included.
-      (":\n: keep-alive\ndata: a\n\n", [a]),
-      // A line with no colon is a field of that name carrying an empty value.
-      ("data\n\n", [ServerSentEvent(data: "")]),
-      ("data:\n\n", [ServerSentEvent(data: "")]),
-      // A frame with no data field dispatches nothing.
-      ("", []),
-      ("\n\n\n", []),
-      ("event: ping\n\n", []),
-      (": comment\n\n", []),
-      // An unknown field name is ignored.
-      ("unknown: x\ndata: a\n\n", [a]),
-      // The event type is the frame's own, and does not carry into the next frame.
-      ("event: update\ndata: a\n\n", [ServerSentEvent(data: "a", event: "update")]),
-      ("event: update\ndata: a\n\ndata: b\n\n", [ServerSentEvent(data: "a", event: "update"), b]),
-      // The id belongs to the stream and carries into later frames.
-      (
-        "id: 1\ndata: a\n\ndata: b\n\n",
-        [
-          ServerSentEvent(data: "a", id: "1"), ServerSentEvent(data: "b", id: "1"),
-        ]
-      ),
-      // An id field with an empty value clears it, which reads back as no id at all.
-      ("id: 1\ndata: a\n\nid\ndata: b\n\n", [ServerSentEvent(data: "a", id: "1"), b]),
-      // An id carrying a null is ignored, and leaves the one already in force.
-      (
-        "id: 1\ndata: a\n\nid: 2\u{0}\ndata: b\n\n",
-        [
-          ServerSentEvent(data: "a", id: "1"), ServerSentEvent(data: "b", id: "1"),
-        ]
-      ),
-      // A retry that is not a whole number of milliseconds, or is too large to represent, is ignored.
-      ("retry: 3000\ndata: a\n\n", [ServerSentEvent(data: "a", retry: .milliseconds(3000))]),
-      ("retry: 3s\ndata: a\n\n", [a]),
-      ("retry:\ndata: a\n\n", [a]),
-      ("retry: 99999999999999999999\ndata: a\n\n", [a]),
-      // A frame of nothing but a retry dispatches no event, and the value reaches the next one.
-      ("retry: 3000\n\ndata: a\n\n", [ServerSentEvent(data: "a", retry: .milliseconds(3000))]),
-      // A frame the stream ended in the middle of is discarded.
-      ("data: a\n\ndata: b\n", [a]),
-      ("data: a", []),
-    ]
+    arguments: goldenCases
   )
   func golden(input: String, expected: [ServerSentEvent]) async {
     let (whole, byByte) = await events(of: input)

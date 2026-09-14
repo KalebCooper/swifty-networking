@@ -38,14 +38,18 @@ more to the same initializer, and none of them changes how a request is written.
   deadline, credentials, and observers in one initializer. The type is not generic, so it is spelled
   `HTTPClient` wherever it is stored or injected, and `HTTPURLSession` adds
   `HTTPClient(baseURL:session:)`, which builds the transport for you.
-- Redirects under a policy: `follow`, `sameOrigin`, or `never`, per client or per request, with the
-  credential the client attached kept off any hop to another origin, and every hop reported to the
-  observer. A transport never follows one on its own.
+- Redirects under a policy: `follow`, `sameOrigin`, or `never`, per client or per request, with
+  `Authorization`, `Cookie`, `Proxy-Authorization`, and the credential field kept off any hop to
+  another origin, whoever set them, and every hop reported to the observer. A transport never
+  follows one on its own.
 - Typed errors: every call throws `TransportError` and nothing else.
 - Streaming as `AsyncSequence`: `stream(_:)` hands back a `StreamedBody`, a sequence of `Data`
   chunks, and the line splitting, NDJSON, and Server-Sent Events decoders each read one directly.
   `events(_:)` reconnects a Server-Sent Events stream on its own, carrying `Last-Event-ID` and
   waiting the server's `retry` on the client's clock.
+- Pagination as `AsyncSequence`: `pages(_:as:next:)` returns a `PageSequence` that follows a `Link`
+  header field, read with `WebLink`, or a cursor from the body, each page its own request through
+  the whole client.
 - A file body, `RequestBody.file`, that the transport reads from disk as it sends, a form body,
   `RequestBody.form`, encoded from the same `QueryItem` values a query is built from, a
   `multipart/form-data` body, `RequestBody.multipart`, built part by part from text fields and
@@ -60,7 +64,7 @@ more to the same initializer, and none of them changes how a request is written.
 ## Installation
 
 ```swift
-.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.0.0")
+.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.1.0")
 ```
 
 Add `HTTPCore` to any target that builds requests, `HTTPURLSession` to the one that sends them on Apple
@@ -68,7 +72,7 @@ platforms, `HTTPPortable` to the one that sends them on Linux and on Android, an
 test targets. `HTTPPortable` is behind a trait of the same name, so enable it on the dependency:
 
 ```swift
-.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.0.0",
+.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.1.0",
          traits: ["HTTPPortable"])
 ```
 
@@ -171,7 +175,8 @@ anything else as unknown.
 Annotate the call with a `DecodedResponse` and it carries the decoded body together with the header
 fields and the status it arrived with. The body is decoded exactly as the typed `execute(_:)`
 decodes it, so a large one still parses off the caller's executor. Reach for it when a header field
-is part of the answer: an `ETag` to send back, a pagination cursor, a rate-limit budget.
+is part of the answer: an `ETag` to send back, a pagination cursor (see Paginating below), a
+rate-limit budget.
 
 ```swift
 let page: DecodedResponse<[Item]> = try await client.execute(Request(path: "/items"))
@@ -181,12 +186,34 @@ print(page.value.count, page.headers[.eTag] ?? "", page.status.code)
 One method name, three results: `execute(_:)` returns a decoded value, a `DecodedResponse`, or the
 raw `Response`, and the type you annotate decides which.
 
+### Paginating
+
+`HTTPClient.pages(_:as:next:)` returns a sequence of decoded pages, fetching each one after a rule
+you supply names where the following page lives: a `Link` header field, or a cursor from the body.
+
+```swift
+let issues = client.pages(Request(path: "/repos/o/r/issues"), as: [Issue].self) { page, _ in
+  WebLink.links(in: page.headers)
+    .first { $0.relations.contains("next") }
+    .map { .link($0.target) }
+}
+
+for try await page in issues {
+  handle(page.value)
+}
+```
+
+Nothing is sent until the sequence is read, `nil` from the rule ends it, and there is no page
+limit. Each page is its own request through the whole pipeline: its own retries, deadline,
+redirects, and credential rules.
+
 ### Authenticating with refresh
 
 A `TokenProvider` supplies the current token and a `TokenRefresher` replaces it. An `Authentication`
 pairs the two with the rules around them: the client attaches the token on every send and, on a
-`401`, refreshes once and replays the request once, and a `refreshThreshold` makes it refresh before
-a send when the provider reports a lifetime at or below it.
+`401` ending a chain that reached the base URL's origin, refreshes once and replays the request
+once, and a `refreshThreshold` makes it refresh before a send when the provider reports a lifetime
+at or below it.
 
 ```swift
 import Synchronization
@@ -272,8 +299,9 @@ the request's own `RequestOptions.redirectPolicy`. `.sameOrigin` follows only wh
 and port stay the request's; `.never` follows nothing. A redirect the policy stops at is thrown as
 `TransportError.httpStatus` with the `Location` field in its headers. A `301`, `302`, or `303` sends
 `GET` with no body; a `307` or `308` keeps the method and the body. A hop to another origin goes out
-without the field the client attached, whichever field `Authentication.scheme` names. Twenty hops are
-followed, and every one is a send the observer sees.
+without `Authorization`, `Cookie`, `Proxy-Authorization`, and the field `Authentication.scheme`
+names, whoever set them; every other field travels as written. Twenty hops are followed, and every
+one is a send the observer sees.
 
 ```swift
 let client = HTTPClient(
@@ -461,7 +489,7 @@ import Testing
 
 The API reference for `HTTPCore`, `HTTPURLSession`, and `HTTPTesting` is at
 **[kalebcooper.github.io/swifty-networking](https://kalebcooper.github.io/swifty-networking/documentation/)**,
-rebuilt from `main` on every push to it. Eight articles accompany it:
+rebuilt from `main` on every push to it. Nine articles accompany it:
 
 | Article | |
 |---|---|
@@ -471,6 +499,7 @@ rebuilt from `main` on every push to it. Eight articles accompany it:
 | [Concurrency Posture](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/concurrencyposture/) | How the package uses isolation, shared state, and typed throws |
 | [The Error Model](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/errormodel/) | `TransportError`, its cases, and decoding a server's error envelope |
 | [Streaming a Response](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/streaming/) | `stream(_:)`, `LineSplitter`, `NDJSONDecoder`, `SSEDecoder`, and `EventSource` |
+| [Paginating a Response](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/paginating/) | `pages(_:as:next:)`, following a `Link` header or a body cursor, and `WebLink` |
 | [Testing](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/testing/) | `MockTransport`, `RecordingClock`, `RecordingObserver`, and `StubURLProtocol` |
 | [Bridging Observable State to Request Replay](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/observations/) | Driving a request from an `@Observable` model with `Observations` |
 

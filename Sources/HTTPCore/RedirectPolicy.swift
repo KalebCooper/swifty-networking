@@ -18,8 +18,9 @@
 public enum RedirectPolicy: Hashable, Sendable {
   /// Follow every redirect, to any origin.
   ///
-  /// A hop to another origin goes out without the credential the client attached, so a token
-  /// meant for one host never reaches another.
+  /// A hop to another origin goes out without `Authorization`, `Cookie`, `Proxy-Authorization`,
+  /// and the field the client's ``Authentication`` scheme writes into, whoever set them, so a
+  /// credential meant for one host never reaches another. Every other field travels as set.
   case follow
 
   /// Follow no redirect: every `3xx` is returned as the response.

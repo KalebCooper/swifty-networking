@@ -45,7 +45,10 @@ import HTTPTypesFoundation
 ///
 /// The session configuration is where this transport's deadlines are set, through
 /// `timeoutIntervalForRequest` and `timeoutIntervalForResource`, and where its cache lives, through
-/// `urlCache` and `requestCachePolicy`.
+/// `urlCache` and `requestCachePolicy`. A field the configuration adds itself, such as
+/// `httpAdditionalHeaders`, which `URLSession` merges into every request, is invisible to
+/// ``/HTTPCore/HTTPClient``'s credential rules and travels to every origin a redirect or a linked
+/// page reaches.
 ///
 /// ## Honouring the Options
 ///

@@ -1,7 +1,14 @@
 import HTTPCore
 import HTTPTesting
+import HTTPTypes
 import Synchronization
 import Testing
+
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
 
 /// A ``FlowControl`` that records every call in the order it was made and decides nothing.
 ///
@@ -102,4 +109,33 @@ func answerWaits(_ count: Int, of clock: RecordingClock) async {
     await clock.waitForPendingSleep()
     clock.advanceAll()
   }
+}
+
+/// The `Authorization` values the transport saw, in send order; `nil` where a request carried none.
+func authorizations(of transport: MockTransport) -> [String?] {
+  transport.requests.map { $0.request.headerFields[.authorization] }
+}
+
+/// The `:path` of every request the transport saw, in send order.
+func paths(of transport: MockTransport) -> [String?] {
+  transport.requests.map { $0.request.path }
+}
+
+/// Whether the failure is a transport failure of kind `badURL`.
+func isBadURL(_ error: TransportError?) -> Bool {
+  if case .some(.transport(kind: .badURL, underlying: _)) = error { true } else { false }
+}
+
+/// The status code of a status failure.
+func statusCode(_ error: TransportError?) -> Int? {
+  if case .some(.httpStatus(body: _, code: let code, headers: _)) = error { code } else { nil }
+}
+
+/// A redirect carrying `location`, with a body a follower must never read.
+func redirect(_ code: Int, to location: String?) -> Response {
+  var headers: HTTPFields = [:]
+  if let location { headers[.location] = location }
+  return Response(
+    body: Data("<html>moved</html>".utf8), headers: headers, status: HTTPResponse.Status(code: code)
+  )
 }

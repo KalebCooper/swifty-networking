@@ -39,11 +39,6 @@ private func origin(accepting token: String, answering body: Data)
   }
 }
 
-/// The `Authorization` values the transport saw, in send order; `nil` where a request carried none.
-private func authorizations(of transport: MockTransport) -> [String?] {
-  transport.requests.map { $0.request.headerFields[.authorization] }
-}
-
 /// The identifier every event carried, in order.
 private func correlationIDs(_ events: [RecordingObserver.Event]) -> [String] {
   events.map { event in

@@ -60,6 +60,13 @@ let profile: Profile = try await client.execute(Request(path: "/me"))
 - ``EventSource``
 - ``StreamedBody``
 
+### Pagination
+
+- <doc:Paginating>
+- ``PageSequence``
+- ``NextPage``
+- ``WebLink``
+
 ### The Transport Boundary
 
 - ``Transport``

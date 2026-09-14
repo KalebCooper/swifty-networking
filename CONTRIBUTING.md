@@ -23,7 +23,9 @@ catalog, and every change to it lands in `CHANGELOG.md`.
   suspended on something that never resumes, not one spinning synchronously. One minute is the
   shortest limit Swift Testing can express and is a guard, not the target; on a parameterized test
   it bounds each case rather than the whole argument set.
-- **Style:** `swift format lint --strict --recursive Sources Tests` must report zero findings.
+- **Style:** `swift format lint --strict --recursive Sources Tests` must report zero findings under
+  the formatter in the `swift:6.3-noble` image, the one CI lints with. `Scripts/verify.sh` runs it in
+  that container through Docker, so Docker must be running.
   Declarations are ordered alphabetically within their groupings unless initialization order or a
   logical dependency dictates otherwise.
 - **Gate:** `Scripts/verify.sh` runs the format lint and every repository invariant the compiler

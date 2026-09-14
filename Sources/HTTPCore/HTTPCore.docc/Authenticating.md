@@ -51,8 +51,9 @@ The provider holds one string whichever scheme sends it, so a `basic` credential
 7617 defines, the user name, a colon, and the password, encoded where you store it rather than by
 the client. ``Authentication/basicCredential(password:username:)`` builds that string from the pair.
 Every other rule reads the same under every scheme: ``RequestOptions/requiresAuth``
-decides whether a credential goes out, a `401` earns one refresh and one replay, and a hop to
-another origin is sent without the field the client attached, whichever field that is.
+decides whether a credential goes out, a `401` earns one refresh and one replay whenever some send
+in the chain reached the base's origin, and a hop to another origin is sent without the field,
+whichever field that is, and whoever set it.
 
 ## Logging In and Storing the Token
 
@@ -161,7 +162,13 @@ with the refresher's own error, and nothing is sent.
 ## Refreshing After a 401
 
 A `401` on an authenticated request, with ``Authentication/replayOn401`` on and a refresher present,
-refreshes once and replays the same request once with whatever the provider then holds.
+refreshes once and replays the same request once with whatever the provider then holds, as long as
+some send in the chain that produced the `401` reached the base's origin. A base request that never
+redirects qualifies by construction; so does one redirected to another origin that answers `401`
+there, and one whose provider held no token at all, which is how a refresher logs in on the first
+`401`. A chain that never reached the base's origin, such as a cross-origin ``NextPage/link(_:)``
+page that stays off-origin, returns the `401` with no refresh, since a fresh credential would not
+have gone out on it either.
 
 ```swift
 // A server whose 401 means something other than an expired credential.
@@ -174,9 +181,10 @@ one reactive refresh, because the replay path reasons about the token it actuall
 not a retry attempt: it happens inside one attempt, so the retry policy in <doc:RequestPolicies>
 counts the pair as one.
 
-A `401` at the end of a redirect chain earns the same treatment, and the replay starts from the
-request as resolved rather than from the hop that refused it. When the chain had crossed origins,
-that means the refreshed token reaches only a same-origin hop: the refresh is wasted, never exposed.
+A `401` at the end of a redirect chain earns the same treatment whenever the chain touched the
+base's origin at any point, and the replay starts from the request as resolved rather than from the
+hop that refused it. A base request redirected to a third party that keeps answering `401` on its
+own terms earns this every attempt, since each attempt's chain starts at the base's origin again.
 
 ## One Credential, One Refresh
 

@@ -103,6 +103,22 @@ import HTTPTypes
 /// }
 /// ```
 ///
+/// ## Paginating
+///
+/// ``pages(_:as:next:)`` returns a ``PageSequence`` that fetches a first page and then each page a
+/// rule you supply names, as a ``NextPage``: a URI reference such as a `Link` target, or a request
+/// carrying a cursor. Each page is its own logical request through the whole pipeline.
+///
+/// ```swift
+/// let items = client.pages(Request(path: "/items"), as: ItemPage.self) { page, request in
+///   page.value.nextCursor.map { cursor in
+///     var next = request
+///     next.query = [QueryItem(name: "cursor", value: cursor)]
+///     return .request(next)
+///   }
+/// }
+/// ```
+///
 /// ## Isolation
 ///
 /// Every entry point runs on the caller's actor until the transport truly suspends, and a decoded
@@ -312,27 +328,24 @@ public struct HTTPClient: Sendable {
     var url: URL
   }
 
-  /// A request the client has resolved: what goes on the wire, and what every event about it
+  /// A request the client has resolved: what goes on the wire first, and what every event about it
   /// carries.
   ///
   /// Resolving happens once per logical request, so the correlation identifier is minted once and
-  /// the target's `URL` is built once, however many attempts and replays follow.
+  /// the first hop is built once, however many attempts and replays follow.
   private struct Resolved {
-    /// The body as the transport receives it, encoded where encoding was needed.
-    var body: TransportBody
-
     /// The identifier every event about this request carries.
     var correlationID: String
+
+    /// The first send: the request as the transport receives it, before any redirect.
+    var hop: Hop
 
     /// The settings the transport honours, projected from the request's options.
     var options: TransportOptions
 
-    /// The absolute request as a transport receives it.
-    var target: HTTPRequest
-
-    /// The absolute target as the events that report it carry it.
-    var url: URL
-
+    /// The origin of ``baseURL``, which is where the credential belongs; `nil` when the base's
+    /// authority names no host, and then no hop but a base-joined first one carries it.
+    var origin: URLReference.Origin?
   }
 
   /// One request in a redirect chain: the first one as resolved, or the request a `Location` led
@@ -341,13 +354,22 @@ public struct HTTPClient: Sendable {
   /// The target carries no credential. The credential is applied when the hop is sent, because
   /// whether it goes out depends on where the hop is going.
   private struct Hop {
+    /// The absolute target written out: `scheme://authority`, then the path and query as sent.
+    ///
+    /// This is the string a reference in the answer is resolved against, a `Location` here and
+    /// whatever the caller reads out of the response, so it is built from the pseudo-header
+    /// fields and never from `url`, keeping resolution one rule on every platform.
+    var address: String
+
     /// The body this hop sends; ``TransportBody/none`` once a `301`, `302`, or `303` dropped it.
     var body: TransportBody
 
-    /// Whether this hop's scheme, host, and port are the ones the request was resolved to.
+    /// Whether this hop's scheme, host, and port are the base's, where the credential belongs.
     ///
-    /// The first hop's are by definition, so its credential goes out whatever the origin looks
-    /// like, and a later hop earns the credential only when this is `true`.
+    /// A base-joined first hop's are by construction, so its credential goes out whatever the
+    /// origin looks like. An absolute first hop is compared like any later one, and a hop earns
+    /// the credential only when this is `true`. When it is `false`, every field that carries a
+    /// credential is withheld from the send as well, whoever set it.
     var sameOrigin: Bool
 
     /// The request as the transport receives it, before any credential is applied.
@@ -357,6 +379,29 @@ public struct HTTPClient: Sendable {
     var url: URL
   }
 
+  /// Where a request is sent.
+  package enum Destination: Sendable {
+    /// An absolute URL, sent as written: it must carry a scheme and an authority, and the
+    /// request's ``Request/path`` and ``Request/query`` take no part in it.
+    case absolute(String)
+
+    /// The request's ``Request/path`` and ``Request/query`` joined onto ``HTTPClient/baseURL``.
+    case base
+  }
+
+  /// An answer together with the absolute URL of the send that produced it.
+  ///
+  /// A redirect chain ends somewhere other than where it started, so a reference the answer
+  /// carries is read against `url`, not against the request that was resolved.
+  package struct Delivery<Answer: Sendable>: Sendable {
+    /// The response the last send in the chain produced.
+    package var answer: Answer
+
+    /// The absolute URL the answer came from: `scheme://authority`, then the path and query as
+    /// sent, in the form `URLReference.resolve(_:against:)` takes as its base.
+    package var url: String
+  }
+
   /// The parsed base, split once so the join is a concatenation per request; `nil` when ``baseURL``
   /// could not be parsed, which every request then reports.
   private var base: BaseURL?
@@ -364,6 +409,12 @@ public struct HTTPClient: Sendable {
   /// The in-flight exchanges a keyed request through this client, or a copy of it, may join; a copy
   /// pointed at another transport takes a fresh one.
   private var coalescer = RequestCoalescer()
+
+  /// The fields that carry a credential whoever set them, withheld from a send off the base's
+  /// origin.
+  private static let credentialFields: [HTTPField.Name] = [
+    .authorization, .cookie, .proxyAuthorization,
+  ]
 
   /// How many bytes of a failed streamed response's body reach the failure thrown for it.
   ///
@@ -462,7 +513,7 @@ public struct HTTPClient: Sendable {
     async throws(TransportError)
     -> sending R
   {
-    let response = try await perform(request)
+    let response = try await perform(request).answer
     return try await response.decode(with: decoder)
   }
 
@@ -480,7 +531,7 @@ public struct HTTPClient: Sendable {
   /// - Throws: ``TransportError/httpStatus(body:code:headers:)`` for a status outside `2xx`, and
   ///   whatever the transport or the body encoder threw.
   public func execute(_ request: Request) async throws(TransportError) -> Response {
-    try await perform(request)
+    try await perform(request).answer
   }
 
   /// Sends the request and decodes its successful body, keeping the header fields and status it
@@ -511,7 +562,7 @@ public struct HTTPClient: Sendable {
     async throws(TransportError)
     -> sending DecodedResponse<Value>
   {
-    let response = try await perform(request)
+    let response = try await perform(request).answer
     let value: Value = try await response.decode(with: decoder)
     return DecodedResponse(headers: response.headers, status: response.status, value: value)
   }
@@ -536,19 +587,34 @@ public struct HTTPClient: Sendable {
   ///
   /// The exchange and the deadline race as two children of one group, so whichever finishes first
   /// decides and the other is cancelled. The deadline is the client's own, so it wraps the whole of
-  /// `dispatch(_:)`: the retry loop sits inside the exchange child, which is what keeps a timeout
-  /// from ever reaching ``RetryPolicy/retryable``, and a coalesced caller's deadline cancels that
-  /// caller's wait alone, since the shared exchange runs in a task of its own. The children answer
-  /// with a `Result` rather than throwing, because a group cannot carry a typed failure.
-  private func perform(_ request: Request) async throws(TransportError) -> Response {
-    guard let limit = request.options.timeout ?? timeout else { return try await dispatch(request) }
+  /// `dispatch(_:to:)`: the retry loop sits inside the exchange child, which is what keeps a
+  /// timeout from ever reaching ``RetryPolicy/retryable``, and a coalesced caller's deadline
+  /// cancels that caller's wait alone, since the shared exchange runs in a task of its own. The
+  /// children answer with a `Result` rather than throwing, because a group cannot carry a typed
+  /// failure.
+  ///
+  /// - Parameters:
+  ///   - request: The request to send.
+  ///   - destination: Where it is sent: joined onto ``baseURL``, or to an absolute URL of its own.
+  /// - Returns: The successful response and the URL of the send that produced it, after any
+  ///   redirect.
+  /// - Throws: What ``execute(_:)->Response`` throws, and
+  ///   ``TransportError/transport(kind:underlying:)`` with ``TransportFailureKind/badURL`` for an
+  ///   absolute destination that names no scheme or no authority, before anything is sent.
+  package func perform(_ request: Request, to destination: Destination = .base)
+    async throws(TransportError) -> Delivery<Response>
+  {
+    guard let limit = request.options.timeout ?? timeout else {
+      return try await dispatch(request, to: destination)
+    }
 
     let outcome = await withTaskGroup(
-      of: Result<Response, TransportError>.self, returning: Result<Response, TransportError>.self
+      of: Result<Delivery<Response>, TransportError>.self,
+      returning: Result<Delivery<Response>, TransportError>.self
     ) { group in
       group.addTask {
         do throws(TransportError) {
-          return .success(try await self.dispatch(request))
+          return .success(try await self.dispatch(request, to: destination))
         } catch {
           return .failure(error)
         }
@@ -574,22 +640,29 @@ public struct HTTPClient: Sendable {
 
   /// One logical request run on its own, or shared with every request in flight under the same
   /// key.
-  private func dispatch(_ request: Request) async throws(TransportError) -> Response {
-    guard let key = request.options.coalescingKey else { return try await run(request) }
+  private func dispatch(_ request: Request, to destination: Destination)
+    async throws(TransportError) -> Delivery<Response>
+  {
+    guard let key = request.options.coalescingKey else {
+      return try await run(request, to: destination)
+    }
     // The flight is keyed by the credential the request goes out under as well as by the key, so a
     // response fetched under another token, or under none, is never handed to this caller.
     let identity = CoalescingIdentity(
       credential: request.options.requiresAuth ? authentication?.identity : nil, key: key)
     // A joiner never reaches the transport, so it reports nothing: the flight's own events are the
     // record of the one exchange, and a second set would count an attempt the server never saw.
-    return try await coalescer.run(identity) { () async throws(TransportError) -> Response in
-      try await self.run(request)
+    return try await coalescer.run(identity) {
+      () async throws(TransportError) -> Delivery<Response> in
+      try await self.run(request, to: destination)
     }
   }
 
   /// The one pipeline behind every exchange: resolve once, then attempt until the policy stops.
-  private func run(_ request: Request) async throws(TransportError) -> Response {
-    let resolved = try resolve(request)
+  private func run(_ request: Request, to destination: Destination)
+    async throws(TransportError) -> Delivery<Response>
+  {
+    let resolved = try resolve(request, to: destination)
     let policy = request.options.retryPolicy ?? retryPolicy
     let redirects = request.options.redirectPolicy ?? redirectPolicy
     let requiresAuth = request.options.requiresAuth
@@ -643,13 +716,45 @@ public struct HTTPClient: Sendable {
     return RetryAfter.delay(in: headers)
   }
 
-  /// Turns the relative request into the absolute one a transport sends, with the header fields
-  /// merged, the body encoded, and the correlation identifier settled.
+  /// Turns the request into the absolute one a transport sends, with the header fields merged, the
+  /// body encoded, and the correlation identifier settled.
   ///
   /// Encoding happens here, before anything is sent, so an encoding failure means nothing went on
-  /// the wire. This runs once per logical request, so one identifier covers every attempt.
-  private func resolve(_ request: Request) throws(TransportError) -> Resolved {
+  /// the wire, and so does the reading of an absolute destination, so one that names no scheme or
+  /// no authority is refused the same way. This runs once per logical request, so one identifier
+  /// covers every attempt.
+  private func resolve(_ request: Request, to destination: Destination)
+    throws(TransportError) -> Resolved
+  {
     guard let base else { throw .transport(kind: .badURL, underlying: nil) }
+    // The base's origin is where the credential belongs. A base `BaseURL` accepted always names a
+    // scheme and an authority, but the authority may name no host, and then there is no origin.
+    let origin = URLReference.Origin(authority: base.authority, scheme: base.scheme)
+
+    let authority: String
+    let path: String
+    let sameOrigin: Bool
+    let scheme: String
+    switch destination {
+    case .absolute(let string):
+      let parts = URLReference.parse(string)
+      guard let written = parts.scheme, let named = parts.authority, !named.isEmpty else {
+        throw .transport(kind: .badURL, underlying: nil)
+      }
+      authority = named
+      path = Self.requestTarget(of: parts)
+      scheme = written
+      // Only an absolute destination is compared. A base with no origin has nowhere the
+      // credential belongs, so an absolute send under one carries none.
+      sameOrigin =
+        origin != nil && URLReference.Origin(authority: authority, scheme: scheme) == origin
+    case .base:
+      authority = base.authority
+      path = base.target(path: request.path, query: request.query)
+      // By construction: the join keeps the base's scheme and authority whatever they name.
+      sameOrigin = true
+      scheme = base.scheme
+    }
 
     let body: TransportBody
     let bodyContentType: String?
@@ -708,9 +813,9 @@ public struct HTTPClient: Sendable {
 
     let target = HTTPRequest(
       method: request.method,
-      scheme: base.scheme,
-      authority: base.authority,
-      path: base.target(path: request.path, query: request.query),
+      scheme: scheme,
+      authority: authority,
+      path: path,
       headerFields: fields
     )
     // The events carry the URL the wire types synthesize from the pseudo-header fields, which is the
@@ -718,11 +823,34 @@ public struct HTTPClient: Sendable {
     // fail there with the same kind, so it is refused here, before anything is sent.
     guard let url = target.url else { throw .transport(kind: .badURL, underlying: nil) }
     return Resolved(
-      body: body,
       correlationID: correlationID,
+      hop: Hop(
+        address: Self.address(authority: authority, path: path, scheme: scheme),
+        body: body,
+        sameOrigin: sameOrigin,
+        target: target,
+        url: url),
       options: TransportOptions(cachePolicy: request.options.cachePolicy),
-      target: target,
-      url: url)
+      origin: origin)
+  }
+
+  /// The `:path` pseudo-header value `parts` names: its path and query, or the root when it
+  /// names no path.
+  ///
+  /// A request target is never empty, so a URL naming only an authority asks for its root, as the
+  /// base-URL join reads a base with no path.
+  private static func requestTarget(of parts: URLReference.Parts) -> String {
+    var path = parts.path.isEmpty ? "/" : parts.path
+    if let query = parts.query {
+      path.append("?")
+      path.append(query)
+    }
+    return path
+  }
+
+  /// The absolute URL a hop sends to, written out from its pseudo-header fields.
+  private static func address(authority: String, path: String, scheme: String) -> String {
+    "\(scheme)://\(authority)\(path)"
   }
 
   /// One attempt as the retry policy counts it: one exchange with the server, and the status of
@@ -735,14 +863,14 @@ public struct HTTPClient: Sendable {
   /// ``RetryPolicy/retryable`` alongside a transport one.
   private func attempt(
     _ resolved: Resolved, number: Int, redirects: RedirectPolicy, requiresAuth: Bool
-  ) async throws(TransportError) -> Response {
-    let response = try await exchange(
+  ) async throws(TransportError) -> Delivery<Response> {
+    let delivery = try await exchange(
       resolved, number: number, redirects: redirects, requiresAuth: requiresAuth
     ) { (target, body, options) async throws(TransportError) in
       try await transport.send(target, body: body, options: options)
     }
-    try checkStatus(response)
-    return response
+    try checkStatus(delivery.answer)
+    return delivery
   }
 
   /// One exchange with the server: credential attached, sent, redirects followed, and, on a `401`
@@ -752,6 +880,13 @@ public struct HTTPClient: Sendable {
   /// whether or not a replay happened and "retry twice" composes with "replay once on `401`"
   /// without either counting the other. Every send here is reported under `number`, so a redirect
   /// hop or a replay is visible as another pair of events and not as an extra attempt.
+  ///
+  /// A refresh serves a chain that sent to the base's origin and no other: the proactive one is
+  /// skipped when the first send goes to another origin, and a `401` ending a chain that never
+  /// reached the base's origin is the answer, since a fresh token would not have gone out on it
+  /// either. A chain that did reach it earns the refresh wherever its `401` came from, because the
+  /// replay sends the new token there, and it earns it even when the provider held no token, which
+  /// is how a refresher logs in on demand.
   ///
   /// What the transport is asked for arrives as `call`, so a buffered response and a streamed one
   /// pass through one copy of the credential and redirect rules. Those rules read nothing but the
@@ -763,20 +898,21 @@ public struct HTTPClient: Sendable {
     requiresAuth: Bool,
     through call: (HTTPRequest, TransportBody, TransportOptions) async throws(TransportError)
       -> Answer
-  ) async throws(TransportError) -> Answer {
+  ) async throws(TransportError) -> Delivery<Answer> {
     guard requiresAuth, let authentication else {
       return try await follow(
-        resolved, credential: nil, number: number, redirects: redirects, through: call)
+        resolved, credential: nil, number: number, redirects: redirects, through: call
+      ).delivery
     }
 
-    try await refreshIfExpiring(authentication)
+    if resolved.hop.sameOrigin { try await refreshIfExpiring(authentication) }
     let sent = authentication.provider.currentToken()
-    let response = try await follow(
+    let followed = try await follow(
       resolved, credential: credential(sent, under: authentication), number: number,
       redirects: redirects, through: call)
-    guard response.status == .unauthorized, authentication.replayOn401,
-      let refresher = authentication.refresher
-    else { return response }
+    guard followed.reachedOrigin, followed.delivery.answer.status == .unauthorized,
+      authentication.replayOn401, let refresher = authentication.refresher
+    else { return followed.delivery }
 
     // The refused answer is dropped unread. A streamed one cancels whatever was still fetching it,
     // which is what a streaming transport guarantees for a body nobody reads. The replay is the
@@ -787,7 +923,8 @@ public struct HTTPClient: Sendable {
     let replayed = authentication.provider.currentToken()
     return try await follow(
       resolved, credential: credential(replayed, under: authentication), number: number,
-      redirects: redirects, through: call)
+      redirects: redirects, through: call
+    ).delivery
   }
 
   /// `token` paired with the scheme that renders it, or `nil` when the provider held none.
@@ -801,14 +938,19 @@ public struct HTTPClient: Sendable {
   /// One send, and every redirect hop `redirects` allows after it, until a response that is not a
   /// redirect the policy follows.
   ///
-  /// The credential is applied at each send rather than carried on the target: the first send
-  /// always gets it, and a hop only when it stays on the origin the request was resolved to, so
-  /// the field the client attached never crosses to another host. A field the caller set is not
-  /// the client's to remove and travels with every hop.
+  /// The credential is applied at each send rather than carried on the target: a send gets it
+  /// only when it stays on the base's origin, so the field the client attached never crosses to
+  /// another host. A base-joined first send is there by construction; an absolute one, and every
+  /// hop, is compared. A send off the base's origin also goes without the `Authorization`,
+  /// `Cookie`, and `Proxy-Authorization` fields, and the field the scheme writes into, whoever set
+  /// them. Every other field the caller set travels with every hop, and a hop that comes back to
+  /// the base's origin sends all of them.
   ///
   /// A `3xx` answer that is followed is dropped unread, which on the streamed path cancels
   /// whatever was still fetching its body. The one returned, because the policy, the limit, or
-  /// the `Location` stopped the chain, is the caller's to interpret.
+  /// the `Location` stopped the chain, is the caller's to interpret, together with the URL of the
+  /// send that produced it and whether any send in the chain was on the base's origin, which is
+  /// what decides whether a `401` at its end earns a refresh.
   private func follow<Answer: ExchangeAnswer>(
     _ resolved: Resolved,
     credential: Credential?,
@@ -816,17 +958,20 @@ public struct HTTPClient: Sendable {
     redirects: RedirectPolicy,
     through call: (HTTPRequest, TransportBody, TransportOptions) async throws(TransportError)
       -> Answer
-  ) async throws(TransportError) -> Answer {
-    // A base `BaseURL` accepted always names a scheme and an authority, but the authority may name
-    // no host; then no hop can share the origin, and only the first send carries the credential.
+  ) async throws(TransportError) -> (delivery: Delivery<Answer>, reachedOrigin: Bool) {
+    // The policy reads the origin the request was sent to, which an absolute destination may put
+    // somewhere other than the base; the credential reads the base's, wherever the request went.
     let origin = URLReference.Origin(
-      authority: resolved.target.authority, scheme: resolved.target.scheme)
-    var hop = Hop(body: resolved.body, sameOrigin: true, target: resolved.target, url: resolved.url)
+      authority: resolved.hop.target.authority, scheme: resolved.hop.target.scheme)
+    var hop = resolved.hop
     var followed = 0
+    var reachedOrigin = false
     while true {
-      let attached = hop.sameOrigin ? credential : nil
+      let sameOrigin = hop.sameOrigin
+      reachedOrigin = reachedOrigin || sameOrigin
+      let attached = sameOrigin ? credential : nil
       let response = try await send(
-        authorized(hop.target, with: attached),
+        authorized(sameOrigin ? hop.target : withholdingCredentials(hop.target), with: attached),
         body: hop.body,
         context: EventContext(
           attempt: number,
@@ -837,8 +982,10 @@ public struct HTTPClient: Sendable {
         options: resolved.options,
         through: call)
       guard followed < Self.redirectLimit,
-        let next = nextHop(after: response, from: hop, origin: origin, redirects: redirects)
-      else { return response }
+        let next = nextHop(
+          after: response, credentialOrigin: resolved.origin, from: hop, origin: origin,
+          redirects: redirects)
+      else { return (Delivery(answer: response, url: hop.address), reachedOrigin) }
       hop = next
       followed += 1
     }
@@ -852,12 +999,18 @@ public struct HTTPClient: Sendable {
   /// not, or that the wire types cannot express as a URL, leaves the `3xx` as the response. The
   /// three older statuses turn the request into a `GET` with no body, a `HEAD` excepted, and
   /// drop the fields that described the body; the two newer keep everything.
+  ///
+  /// Two origins are read, and they differ only after an absolute send: `origin` is where the
+  /// request was sent, which ``RedirectPolicy/sameOrigin`` holds the chain to, and
+  /// `credentialOrigin` is the base's, which decides whether the hop carries the credential.
   private func nextHop<Answer: ExchangeAnswer>(
-    after response: Answer, from hop: Hop, origin: URLReference.Origin?, redirects: RedirectPolicy
+    after response: Answer,
+    credentialOrigin: URLReference.Origin?,
+    from hop: Hop,
+    origin: URLReference.Origin?,
+    redirects: RedirectPolicy
   ) -> Hop? {
-    guard redirects != .never, let location = response.headers[.location],
-      let scheme = hop.target.scheme, let authority = hop.target.authority
-    else { return nil }
+    guard redirects != .never, let location = response.headers[.location] else { return nil }
     let keepsRequest: Bool
     switch response.status.code {
     case 301, 302, 303: keepsRequest = false
@@ -865,21 +1018,13 @@ public struct HTTPClient: Sendable {
     default: return nil
     }
 
-    let current = "\(scheme)://\(authority)\(hop.target.path ?? "")"
-    guard let resolved = URLReference.resolve(location, against: current) else { return nil }
+    guard let resolved = URLReference.resolve(location, against: hop.address) else { return nil }
     let parts = URLReference.parse(resolved)
     guard let nextScheme = parts.scheme, let nextAuthority = parts.authority else { return nil }
     let nextOrigin = URLReference.Origin(authority: nextAuthority, scheme: nextScheme)
-    let sameOrigin = origin != nil && nextOrigin == origin
-    guard redirects == .follow || sameOrigin else { return nil }
+    guard redirects == .follow || (origin != nil && nextOrigin == origin) else { return nil }
 
-    // A request target is never empty, so a `Location` naming only an authority asks for its root,
-    // as the base-URL join reads a base with no path.
-    var path = parts.path.isEmpty ? "/" : parts.path
-    if let query = parts.query {
-      path.append("?")
-      path.append(query)
-    }
+    let path = Self.requestTarget(of: parts)
     var target = HTTPRequest(
       method: hop.target.method,
       scheme: nextScheme,
@@ -894,7 +1039,12 @@ public struct HTTPClient: Sendable {
       target.headerFields[.contentType] = nil
     }
     guard let url = target.url else { return nil }
-    return Hop(body: body, sameOrigin: sameOrigin, target: target, url: url)
+    return Hop(
+      address: Self.address(authority: nextAuthority, path: path, scheme: nextScheme),
+      body: body,
+      sameOrigin: credentialOrigin != nil && nextOrigin == credentialOrigin,
+      target: target,
+      url: url)
   }
 
   /// Refreshes before sending when the rules have a threshold and the provider's remaining lifetime
@@ -907,6 +1057,27 @@ public struct HTTPClient: Sendable {
     try await authentication.gate.refresh(
       replacing: authentication.provider.currentToken(), of: authentication.provider,
       with: refresher)
+  }
+
+  /// The target without any field that carries a credential, for a send that leaves the base's
+  /// origin.
+  ///
+  /// A credential the caller wrote into the request was written for the base's origin, and another
+  /// origin must not receive it. The fields withheld are every one in `credentialFields` and the
+  /// field ``authentication``'s scheme writes into, such as `X-API-Key` under a custom field
+  /// scheme. They are withheld whether or not the request requires auth and whoever set them,
+  /// because the field names the credential and not the code that attached it. Only the send
+  /// loses them: the hop keeps its fields, so a later hop back on the base's origin sends them
+  /// again.
+  private func withholdingCredentials(_ target: HTTPRequest) -> HTTPRequest {
+    var withheld = target
+    for name in Self.credentialFields {
+      withheld.headerFields[name] = nil
+    }
+    if let authentication {
+      withheld.headerFields[authentication.scheme.fieldName] = nil
+    }
+    return withheld
   }
 
   /// The target with the credential rendered into the field its scheme names, or unchanged when
@@ -1111,6 +1282,45 @@ public struct HTTPClient: Sendable {
       client: self, maxLineLength: maxLineLength, reconnectDelay: reconnectDelay, request: request)
   }
 
+  /// Returns a sequence of decoded pages that starts with `request` and follows `next` from each
+  /// page to the one after it.
+  ///
+  /// Nothing is sent until the sequence is read. Each page is decoded with ``decoder`` and handed to
+  /// `next` with the request that produced it, before it is returned; `nil` from `next` makes that
+  /// page the last. See ``PageSequence`` for how a ``NextPage`` is fetched and when the sequence
+  /// ends.
+  ///
+  /// ```swift
+  /// let items = client.pages(Request(path: "/items"), as: ItemPage.self) { page, request in
+  ///   page.value.nextCursor.map { cursor in
+  ///     var next = request
+  ///     next.query = [QueryItem(name: "cursor", value: cursor)]
+  ///     return .request(next)
+  ///   }
+  /// }
+  ///
+  /// for try await page in items {
+  ///   handle(page.value.items)
+  /// }
+  /// ```
+  ///
+  /// `Value` need not be `Sendable`, so a `MainActor` consumer reads pages of a model with no
+  /// conformance it did not want. It must have a `Sendable` metatype, as ``execute(_:)->R`` requires.
+  ///
+  /// - Parameters:
+  ///   - request: The request for the first page, relative to ``baseURL``.
+  ///   - type: The type each page's body decodes as; inferred from `next` when you leave it out.
+  ///   - next: Where the page after a given one lives, or `nil` when that page is the last. It
+  ///     receives the request with ``RequestOptions/coalescingKey`` cleared.
+  /// - Returns: The pages, as a ``PageSequence``.
+  public func pages<Value: Decodable & SendableMetatype>(
+    _ request: Request,
+    as type: Value.Type = Value.self,
+    next: @escaping @Sendable (DecodedResponse<Value>, Request) -> NextPage?
+  ) -> PageSequence<Value> {
+    PageSequence(client: self, next: next, request: request)
+  }
+
   /// Sends the request and returns its successful response with the body still arriving.
   ///
   /// This is ``stream(_:)`` with the status and the header fields kept: ``stream(_:)`` returns the
@@ -1121,13 +1331,13 @@ public struct HTTPClient: Sendable {
   ///   chunks.
   /// - Throws: What ``stream(_:)`` throws.
   func openStream(_ request: Request) async throws(TransportError) -> StreamedResponse {
-    let resolved = try resolve(request)
+    let resolved = try resolve(request, to: .base)
     let response = try await exchange(
       resolved, number: 1, redirects: request.options.redirectPolicy ?? redirectPolicy,
       requiresAuth: request.options.requiresAuth
     ) { (target, body, options) async throws(TransportError) in
       try await transport.stream(target, body: body, options: options)
-    }
+    }.answer
     // The status is settled before any chunk is delivered, so what the server said about the
     // failure is read this far and no further, and the body is released with the throw, which
     // stops the fetch.

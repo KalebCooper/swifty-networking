@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+## 1.1.0 - 2026-09-13
+
+### HTTPCore
+
+- `HTTPClient.pages(_:as:next:)`, returning a `PageSequence` that fetches a first page and then,
+  after decoding each page, asks a rule you supply where the following page lives, as a `NextPage`:
+  a `link(_:)` URI reference, most often from a `Link` header field, or a `request(_:)` sent like
+  any other. Nothing is sent until the sequence is read, `nil` from the rule ends it after the page
+  just decoded is returned, and there is no page limit. Each page is its own request through the
+  whole pipeline, its own correlation identifier, retries, deadline, redirects, and credential rules
+  included; a `link(_:)` reference is resolved against the URL of the response that carried the
+  page, after any redirect, fetched with `GET` and no body, and the sequence's first page alone
+  carries its `RequestOptions.coalescingKey`.
+- `WebLink`, one link from a `Link` header field as RFC 8288 defines it, with `parameters`,
+  `relations`, and `target`, and `WebLink.links(in:)` reading every link across every `Link` field in
+  a set of header fields, skipping one that breaks the grammar and resuming at the next.
+- A `Paginating a Response` DocC article, and a `Pagination` group in the landing page's `Topics`
+  listing it alongside `PageSequence`, `NextPage`, and `WebLink`.
+- Security: a redirect hop or linked page off the base URL's origin goes without `Authorization`,
+  `Cookie`, `Proxy-Authorization`, and the field `Authentication.scheme` writes into, even when the
+  request or `defaultHeaders` set them, and a later hop back on the base's origin sends them again.
+  A `401` refreshes the credential and replays once only when some send in its redirect chain
+  reached the base's origin. Before this, caller-set values followed a redirect to another origin.
+
 ## 1.0.0 - 2026-09-03
 
 Initial release.

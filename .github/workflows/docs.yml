@@ -49,8 +49,10 @@ jobs:
       # the dependency order: HTTPCore is built first and publishes link metadata, then the two
       # products that depend on it resolve against that archive.
       #
-      # Destination and simulator OS mirror ci.yml's apple lane; see the note there on why it is the
-      # lowest runtime the image carries. -derivedDataPath pins where the archives land.
+      # The destination pins an iOS Simulator runtime instead of `latest`, so a runner-image bump moves
+      # the platform the catalog builds against only when someone edits this line. 26.2 is the lowest
+      # runtime the image carried when it was pinned; list the runner's runtimes before editing it.
+      # -derivedDataPath pins where the archives land.
       # Its own derived data, because building either dependent product builds HTTPCore's documentation
       # again as part of the same graph. Sharing one directory would have the second pass rewriting the
       # very archive it was told to resolve against.

@@ -2,7 +2,7 @@ import Synchronization
 
 /// Lets concurrent requests that share a ``RequestOptions/coalescingKey`` share one exchange with
 /// the server, so a burst of identical idempotent reads produces exactly one send and gives every
-/// caller the same ``Response``.
+/// caller the same ``Response``, delivered from the same URL.
 ///
 /// The coalescer is a reference the client holds, for the same reason ``RefreshGate`` is: a
 /// `Sendable` struct cannot own a `Mutex` without becoming noncopyable, and copies of one client
@@ -37,11 +37,12 @@ import Synchronization
 /// waiters may sit on `Task.value`, which no cancellation reaches. A coalesced send can be long,
 /// and a waiter must be able to leave it.
 final class RequestCoalescer: Sendable {
-  /// What a flight delivers to every waiter: the exchange's response, or the error it threw.
+  /// What a flight delivers to every waiter: the exchange's response and the URL it came from, or
+  /// the error it threw.
   ///
   /// The error travels typed inside a `Result`, because the exchange runs in a `Task`, which is
   /// only creatable with an untyped failure.
-  typealias Outcome = Result<Response, TransportError>
+  typealias Outcome = Result<HTTPClient.Delivery<Response>, TransportError>
 
   /// A parked caller; resumed with `nil` when it was cancelled instead of answered.
   private typealias Waiter = CheckedContinuation<Outcome?, Never>
@@ -68,14 +69,14 @@ final class RequestCoalescer: Sendable {
   /// - Parameters:
   ///   - identity: The caller's key together with the credential the exchange goes out under.
   ///   - work: The exchange, run by the leader's flight and never by a joiner.
-  /// - Returns: The response the flight's exchange produced.
+  /// - Returns: The response the flight's exchange produced, and the URL it came from.
   /// - Throws: ``TransportError/cancelled`` when this caller was cancelled while waiting or was
   ///   already cancelled on arrival, and otherwise whatever the exchange threw, to every waiter
   ///   alike.
   func run(
     _ identity: CoalescingIdentity,
-    _ work: @escaping @Sendable () async throws(TransportError) -> Response
-  ) async throws(TransportError) -> Response {
+    _ work: @escaping @Sendable () async throws(TransportError) -> HTTPClient.Delivery<Response>
+  ) async throws(TransportError) -> HTTPClient.Delivery<Response> {
     let ticket = tickets.wrappingAdd(1, ordering: .relaxed).newValue
 
     let outcome: Outcome? = await withTaskCancellationHandler {

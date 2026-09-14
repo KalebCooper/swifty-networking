@@ -38,8 +38,8 @@ no credentials, no observer, a `ContinuousClock`, a plain `JSONDecoder` and `JSO
 client is given its collaborators rather than being registered with them, and a variant of one is a
 copy with a property assigned, which the Deriving a Client section below covers. Every client
 streams through the same transport; see <doc:Streaming>. What the client does with a credential is
-<doc:Authenticating>, and what it does about deadlines, retries, redirects, and coalescing is
-<doc:RequestPolicies>.
+<doc:Authenticating>, what it does about deadlines, retries, redirects, and coalescing is
+<doc:RequestPolicies>, and following a response from page to page is <doc:Paginating>.
 
 There are four entry points, and they differ only in what they do with a successful body. The typed
 ``HTTPClient/execute(_:)->R`` decodes it into a `Decodable` value,

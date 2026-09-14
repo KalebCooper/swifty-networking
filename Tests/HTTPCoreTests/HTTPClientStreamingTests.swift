@@ -303,6 +303,22 @@ struct HTTPClientStreamingTests {
     #expect(transport.last?.request.headerFields[.authorization] == "Bearer first")
   }
 
+  @Test("a stream redirected to another origin sends that hop without the caller's Authorization")
+  func aCrossOriginStreamHopWithholdsCallerAuthorization() async throws {
+    let transport = MockTransport(answers: [
+      answer("", headers: [.location: "https://other.example.com/x"], status: .found),
+      answer("moved"),
+    ])
+    let client = makeClient(transport: transport)
+
+    let bytes = try await client.stream(
+      Request(headers: [.authorization: "Basic abc"], path: "/stream"))
+
+    #expect(try await collect(bytes) == Array("moved".utf8))
+    #expect(paths(of: transport) == ["/stream", "/x"])
+    #expect(authorizations(of: transport) == ["Basic abc", nil])
+  }
+
   @Test(
     "a 401 is refreshed once and replayed once, and the replay's bytes are what the caller gets")
   func aRejectedStreamIsReplayedOnce() async throws {

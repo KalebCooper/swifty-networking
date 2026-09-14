@@ -16,7 +16,7 @@ The product is behind the `HTTPPortable` trait, off by default, so a package tha
 it never fetches or builds SwiftNIO. Enable the trait on the dependency, then import the module:
 
 ```swift
-.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.0.0",
+.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.1.0",
          traits: ["HTTPPortable"])
 ```
 
