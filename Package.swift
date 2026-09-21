@@ -129,6 +129,8 @@ let package = Package(
     .target(
       name: "WebSocketPortable",
       dependencies: [
+        "HTTPCore",
+        .product(name: "HTTPTypes", package: "swift-http-types"),
         .product(
           name: "NIOCore", package: "swift-nio", condition: .when(traits: ["WebSocketPortable"])),
         .product(
@@ -217,6 +219,28 @@ let package = Package(
       dependencies: [
         "HTTPCore", "HTTPTesting", .product(name: "HTTPTypes", package: "swift-http-types"),
         "WebSocketCore", "WebSocketTestSupport",
+      ],
+      swiftSettings: swiftSettings
+    ),
+    .testTarget(
+      name: "WebSocketPortableTests",
+      dependencies: [
+        "HTTPTesting",
+        .product(
+          name: "NIOCore", package: "swift-nio", condition: .when(traits: ["WebSocketPortable"])),
+        .product(
+          name: "NIOEmbedded", package: "swift-nio", condition: .when(traits: ["WebSocketPortable"])
+        ),
+        .product(
+          name: "NIOHTTP1", package: "swift-nio", condition: .when(traits: ["WebSocketPortable"])),
+        .product(
+          name: "NIOPosix", package: "swift-nio", condition: .when(traits: ["WebSocketPortable"])),
+        .product(
+          name: "NIOSSL", package: "swift-nio-ssl", condition: .when(traits: ["WebSocketPortable"])),
+        .product(
+          name: "NIOWebSocket", package: "swift-nio",
+          condition: .when(traits: ["WebSocketPortable"])),
+        "WebSocketCore", "WebSocketPortable", "WebSocketTestSupport",
       ],
       swiftSettings: swiftSettings
     ),

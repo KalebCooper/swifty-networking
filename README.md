@@ -13,7 +13,7 @@ test support included.
 The unreleased WebSocket core provides an injected client, explicit connection ownership, a bounded
 message inbox and send queue, synchronous submission, shared send completion and graceful close.
 Limits, admission and failure policies, and operation deadlines are configurable. The URLSession
-WebSocket adapter is implemented; portable and Hummingbird adapters are not yet implemented.
+WebSocket adapter and the opt-in NIO client are implemented; the Hummingbird adapter is not yet implemented.
 
 ## In under a minute
 
@@ -485,9 +485,10 @@ import Testing
 - An independent, off-by-default `WebSocketHummingbird` trait adds Hummingbird 2.26.0+ and
   HummingbirdWebSocket 2.7.0+ for macOS/Linux adapter scaffolding. It does not require
   `WebSocketPortable`. Default and client-only consumers do not resolve Hummingbird.
-- These WebSocket traits currently enable dependency scaffolding, not usable network adapters.
-  The URLSession adapter is tested on macOS 27 and iOS 26.5 simulator. Other Apple platforms,
-  devices, Linux and Android WebSocket runtimes remain unqualified.
+- The URLSession adapter is tested on macOS 27 and iOS 26.5 simulator. The NIO client has loopback
+  protocol and TLS coverage on Linux, macOS 27 and iOS 26.5 simulator, including the approved
+  NIO 2.102.0 / NIOSSL 2.37.4 minimums. Android WebSocket execution, system-root discovery in an
+  Android app, other Apple platforms and physical devices remain unqualified.
 
 ## Products
 
@@ -503,7 +504,7 @@ retain their existing HTTPCore dependency.
 | `HTTPURLSession` | The `URLSession` transport, buffered and streaming. |
 | `WebSocketCore` | Injected client, bounded receive/send queues, synchronous submission, shared completion, graceful close and backend protocols. |
 | `WebSocketHummingbird` | Independently trait-gated server adapter scaffolding; no live adapter yet. |
-| `WebSocketPortable` | Independently trait-gated NIO client scaffolding; no live transport yet. |
+| `WebSocketPortable` | NIO/NIOSSL client with bounded framing and explicit transport shutdown, behind the `WebSocketPortable` trait. |
 | `WebSocketURLSession` | Apple WebSocket client using an owned URLSession. |
 
 ### WebSocket connection ownership
@@ -590,7 +591,47 @@ Its result and closeInfo are backend-reported metadata, which can reflect our lo
 code and reason. Success does not prove a peer close acknowledgement or application delivery.
 
 The shared limits bound our queues. Foundation's internal buffers, TCP/TLS buffers and temporary
-copies are outside that accounting. Portable and Hummingbird adapters remain scaffolding.
+copies are outside that accounting. The Hummingbird adapter remains scaffolding.
+
+### Portable WebSocket connections
+
+Enable the `WebSocketPortable` dependency trait and add the product of the same name to your target.
+Use one reusable transport and explicitly shut it down after its clients finish:
+
+```swift
+import WebSocketCore
+import WebSocketPortable
+
+let transport = try NIOWebSocketTransport()
+let client = WebSocketClient(transport: transport)
+do {
+  try await client.withConnection(to: endpoint) { socket in
+    try await socket.send("subscribe")
+    for try await message in socket.messages {
+      handle(message)
+    }
+  }
+} catch {
+  try? await transport.shutdown()
+  throw error
+}
+try await transport.shutdown()
+```
+
+Shutdown refuses new connects, aborts pending and open channels, waits for their release, and then
+shuts down the owned event-loop group. Repeated calls share that cleanup. Individual socket
+cancellation leaves the transport reusable.
+
+NIOSSL validates certificates and hostnames with its default platform trust roots. The adapter refuses
+redirects, unsolicited subprotocols and extensions. It shares the core's inbox and send policies.
+Incoming messages use the configured byte bound plus a 1,024-fragment safety limit. Opening responses
+are capped at 16 KiB including the status line and at 100 fields. Resource exhaustion reports
+bufferOverflow or messageTooLarge; malformed protocol input reports protocolViolation.
+Pings continue to be processed while application messages remain unread. A full inbox is terminal;
+TCP/TLS buffers and temporary frame copies remain outside the inbox accounting.
+
+The [WebSocketPortable guide](Sources/WebSocketPortable/WebSocketPortable.docc/WebSocketPortable.md)
+describes these limits and platform qualification.
 
 ### Scripted WebSocket support
 

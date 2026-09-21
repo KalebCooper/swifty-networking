@@ -3,9 +3,6 @@ import Synchronization
 /// Owns shared state, but never retains an external-owner token or iterator.
 final class WebSocketSession: Sendable {
   private typealias PingWaiter = CheckedContinuation<Result<Void, WebSocketError>, Never>
-  private typealias ReadWaiter = CheckedContinuation<
-    Result<WebSocket.Message?, WebSocketError>, Never
-  >
 
   private final class CloseAttempt: Sendable {
     let code: WebSocket.CloseCode
@@ -29,7 +26,6 @@ final class WebSocketSession: Sendable {
   }
 
   private final class Probe: Sendable {}
-  private final class ReadTicket: Sendable {}
 
   private struct SendEntry {
     let completion: WebSocketCompletion<Void>
@@ -49,18 +45,13 @@ final class WebSocketSession: Sendable {
 
   private struct State {
     var aborted = false
-    var bufferedBytes = 0
     var cleanup = false
     var close: WebSocketClose?
     var closeStarted = false
     var closing: CloseAttempt?
-    var inbox: [WebSocket.Message] = []
     var pendingSendBytes = 0
     var ping: Probe?
     var pingWaiter: PingWaiter?
-    var reader: ObjectIdentifier?
-    var readTicket: ReadTicket?
-    var readWaiter: ReadWaiter?
     var sends: [SendEntry] = []
     var sendTimer: SendTimer?
     var tasks: [Work: Task<Void, Never>] = [:]
@@ -85,6 +76,7 @@ final class WebSocketSession: Sendable {
 
   private let backend: any WebSocketConnection
   private let clock: WebSocketClock
+  private let inbox: WebSocketInbox
   private let options: WebSocket.Options
   private let state = Mutex(State())
   private let writes: AsyncStream<Void>
@@ -94,6 +86,7 @@ final class WebSocketSession: Sendable {
     self.backend = backend
     self.clock = clock
     self.options = options
+    inbox = (backend as? any WebSocketBufferedConnection)?.inbox ?? WebSocketInbox(options: options)
     (writes, writeSignal) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
   }
 
@@ -229,42 +222,7 @@ final class WebSocketSession: Sendable {
   }
 
   func next(reader: ObjectIdentifier) async throws(WebSocketError) -> WebSocket.Message? {
-    let ticket = ReadTicket()
-    let result: Result<WebSocket.Message?, WebSocketError> = await withTaskCancellationHandler {
-      await withCheckedContinuation { continuation in
-        let immediate: Result<WebSocket.Message?, WebSocketError>? = state.withLock { state in
-          if Task.isCancelled { return .failure(WebSocketError(kind: .cancelled)) }
-          if let owner = state.reader, owner != reader {
-            return .failure(WebSocketError(kind: .concurrentOperation))
-          }
-          if state.readWaiter != nil { return .failure(WebSocketError(kind: .concurrentOperation)) }
-          state.reader = reader
-          if !state.inbox.isEmpty {
-            let message = state.inbox.removeFirst()
-            state.bufferedBytes -= message.byteCount
-            return .success(message)
-          }
-          if let terminal = state.terminal {
-            state.reader = nil
-            return terminal.map { nil }
-          }
-          state.readTicket = ticket
-          state.readWaiter = continuation
-          return nil
-        }
-        if let immediate { continuation.resume(returning: immediate) }
-      }
-    } onCancel: {
-      self.cancelRead(reader: reader, ticket: ticket)
-    }
-    // Settlement, rather than a later cancellation-flag read, owns message delivery.
-    // Replacing a won message with cancelled here would silently lose that message.
-    switch result {
-    case .success(nil): releaseReader(reader)
-    case .failure(let error) where error.kind != .concurrentOperation: releaseReader(reader)
-    default: break
-    }
-    return try result.get()
+    try await inbox.next(reader: reader)
   }
 
   func ping() async throws(WebSocketError) {
@@ -321,19 +279,18 @@ final class WebSocketSession: Sendable {
     try result.get()
   }
 
-  func releaseReader(_ reader: ObjectIdentifier) {
-    let waiter = state.withLock { state -> ReadWaiter? in
-      guard state.reader == reader else { return nil }
-      state.reader = nil
-      let waiter = state.readWaiter
-      state.readTicket = nil
-      state.readWaiter = nil
-      return waiter
-    }
-    waiter?.resume(returning: .failure(WebSocketError(kind: .cancelled)))
-  }
+  func releaseReader(_ reader: ObjectIdentifier) { inbox.releaseReader(reader) }
 
   func start() {
+    inbox.onFinish { [weak self] result in
+      switch result {
+      case .success(let close): self?.terminate(.success(()), close: close)
+      case .failure(let error):
+        self?.terminate(
+          .failure(error),
+          policyClose: error.kind == .bufferOverflow || error.kind == .messageTooLarge)
+      }
+    }
     attach(
       Task {
         for await _ in writes {
@@ -358,6 +315,7 @@ final class WebSocketSession: Sendable {
           }
         }
       }, as: .writer)
+    guard !(backend is any WebSocketBufferedConnection) else { return }
     attach(
       Task {
         do throws(WebSocketError) {
@@ -370,7 +328,7 @@ final class WebSocketSession: Sendable {
               self.terminate(.success(()), close: close)
               return
             }
-            if !self.accept(message) { return }
+            if !self.inbox.offer(message) { return }
           }
         } catch {
           self.terminate(.failure(error))
@@ -387,32 +345,6 @@ final class WebSocketSession: Sendable {
     }
     effects.1?.cancel()
     if effects.0 { backend.cancel() }
-  }
-
-  private func accept(_ message: WebSocket.Message) -> Bool {
-    let count = message.byteCount
-    let action: (Bool, ReadWaiter?, WebSocketError?) = state.withLock { state in
-      guard state.terminal == nil else { return (false, nil, nil) }
-      guard count <= options.maxMessageBytes else {
-        return (false, nil, WebSocketError(kind: .messageTooLarge))
-      }
-      if let waiter = state.readWaiter {
-        state.readTicket = nil
-        state.readWaiter = nil
-        return (true, waiter, nil)
-      }
-      // Subtraction is safe because both operands are nonnegative and existing admission
-      // already established bufferedBytes <= maxBufferedBytes.
-      guard state.inbox.count < options.maxBufferedMessages,
-        count <= options.maxBufferedBytes - state.bufferedBytes
-      else { return (false, nil, WebSocketError(kind: .bufferOverflow)) }
-      state.inbox.append(message)
-      state.bufferedBytes += count
-      return (true, nil, nil)
-    }
-    action.1?.resume(returning: .success(message))
-    if let error = action.2 { terminate(.failure(error), policyClose: true) }
-    return action.0
   }
 
   private func apply(_ effects: Effects) {
@@ -469,20 +401,6 @@ final class WebSocketSession: Sendable {
       return false
     }
     if reject { task.cancel() }
-  }
-
-  private func cancelRead(reader: ObjectIdentifier, ticket: ReadTicket) {
-    let waiter = state.withLock { state -> ReadWaiter? in
-      // A cancellation handler may finish after its operation has returned. The iterator's
-      // identity alone would allow that stale handler to cancel a later next() through a copy.
-      guard state.reader == reader, state.readTicket === ticket else { return nil }
-      state.reader = nil
-      state.readTicket = nil
-      let waiter = state.readWaiter
-      state.readWaiter = nil
-      return waiter
-    }
-    waiter?.resume(returning: .failure(WebSocketError(kind: .cancelled)))
   }
 
   private func expireSends(_ timer: SendTimer) {
@@ -640,15 +558,8 @@ final class WebSocketSession: Sendable {
     // A partially written message cannot safely be followed by a policy close frame.
     let safePolicyClose = policyClose && state.writing == nil && !state.closeStarted
     state.cleanup = safePolicyClose
-    if case .failure = terminal {
-      state.inbox.removeAll()
-      state.bufferedBytes = 0
-    }
     effects.tasks += state.tasks.values
     state.tasks.removeAll()
-    if let waiter = state.readWaiter {
-      effects.completions.append { waiter.resume(returning: terminal.map { nil }) }
-    }
     let error = terminal.failure ?? WebSocketError(close: state.close, kind: .closed)
     if let waiter = state.pingWaiter {
       effects.completions.append { waiter.resume(returning: .failure(error)) }
@@ -667,12 +578,14 @@ final class WebSocketSession: Sendable {
     state.pendingSendBytes = 0
     state.ping = nil
     state.pingWaiter = nil
-    state.readTicket = nil
-    state.readWaiter = nil
     state.sends.removeAll()
     state.sendTimer = nil
     state.writing = nil
     effects.timer = nil
+    let inbound: Result<WebSocketClose, WebSocketError> =
+      terminal.failure.map { .failure($0) }
+      ?? state.close.map { .success($0) } ?? .failure(WebSocketError(kind: .closed))
+    effects.completions.append { self.inbox.finish(inbound) }
     effects.completions.append { self.writeSignal.finish() }
     if safePolicyClose {
       effects.policyClose = terminal.failure

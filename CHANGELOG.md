@@ -13,6 +13,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- NIOWebSocketTransport in the opt-in WebSocketPortable product, with verified TLS, bounded RFC
+  framing, shared receive/send policies and idempotent shutdown of owned channels and event loops.
+  Linux, macOS 27 and iOS 26.5 simulator loopback coverage includes certificate and hostname
+  rejection and partial-write cancellation. Android WebSocket qualification remains outstanding.
+
 - Apple WebSocket connections through URLSessionWebSocketTransport, with owned sessions, redirect
   refusal, explicit credentials, bounded shared queues, recoverable read/ping waits and physical
   cancellation. Close returns backend-reported metadata and does not promise peer acknowledgement.
@@ -37,8 +42,8 @@ All notable changes to this project are documented here. The format follows
 - `WebSocketCore` value types for text/binary messages, raw close codes, close metadata,
   outbound requests, extensible errors, and configurable send limits and policies.
 - `WebSocketURLSession`, `WebSocketPortable`, and `WebSocketHummingbird` product scaffolding.
-  Portable client and server dependencies have independent default-off traits. Network adapters
-  remain unimplemented.
+  Portable client and server dependencies have independent default-off traits. The Hummingbird
+  adapter remains unimplemented.
 - `MockWebSocketTransport`, `ScriptedWebSocketConnection`, `WebSocketRendezvous`, and explicit
   script-exhaustion errors in `HTTPTesting`, which now depends on `WebSocketCore`.
 - A WebSocketCore reference catalog and isolated consumer dependency-graph verification.

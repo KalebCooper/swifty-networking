@@ -6,7 +6,8 @@ Own a WebSocket connection through an injected backend, with bounded receiving a
 
 ``WebSocketClient`` opens a ``WebSocket`` using a ``WebSocketTransport``. The client accepts
 a request or URL, defaults to ContinuousClock, and supports an injected clock. WebSocketURLSession
-provides the Apple adapter. Portable and Hummingbird network adapters are not yet implemented.
+provides the Apple adapter. WebSocketPortable supplies an opt-in NIO/NIOSSL client with explicit
+transport shutdown. The Hummingbird adapter is not yet implemented.
 
 Opening validates options and requests before credential or backend work. Authentication retains
 the same refresh identity as HTTP. One configurable connectTimeout, thirty seconds by default,
