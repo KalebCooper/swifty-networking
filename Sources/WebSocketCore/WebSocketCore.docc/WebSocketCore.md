@@ -5,8 +5,8 @@ Own a WebSocket connection through an injected backend, with bounded receiving a
 ## Overview
 
 ``WebSocketClient`` opens a ``WebSocket`` using a ``WebSocketTransport``. The client accepts
-a request or URL, defaults to ContinuousClock, and supports an injected clock. Network adapters
-are not yet implemented or qualified.
+a request or URL, defaults to ContinuousClock, and supports an injected clock. WebSocketURLSession
+provides the Apple adapter. Portable and Hummingbird network adapters are not yet implemented.
 
 Opening validates options and requests before credential or backend work. Authentication retains
 the same refresh identity as HTTP. One configurable connectTimeout, thirty seconds by default,
@@ -41,7 +41,7 @@ Overflow fails the connection with bufferOverflow; an oversized message reports 
 Buffered payloads are released on failure. When no data write or close frame is active, the core attempts a bounded close with code 1008
 or 1009 respectively, then aborts the backend. Otherwise it aborts directly to avoid interleaving
 frames. closeTimeout defaults to five seconds.
-A valid peer close drains already buffered messages before ending the sequence.
+Backend-reported closure drains already buffered messages before ending the sequence.
 ``WebSocketClose`` preserves an absent code and raw application-defined codes.
 
 ### Sending and Completion
@@ -103,7 +103,10 @@ sends' failure policies. It waits only for the active write before starting the 
 calls join the same attempt: the first valid code and reason win, with one closeTimeout including
 the active-write wait. Invalid codes or reasons longer than 123 UTF-8 bytes throw invalidRequest
 without altering the connection. Raw application codes 3000 through 4999 are accepted.
-The returned ``WebSocketClose`` preserves the peer's actual metadata, including an absent code.
+The returned ``WebSocketClose`` contains backend-reported closure metadata, including an absent code.
+Success means the backend completed closing, not that the peer acknowledged a close frame.
+URLSession may report the locally requested code and reason even when the peer replies differently
+or does not send a close frame. These values must not be treated as application acknowledgements.
 
 ``WebSocket/CloseCancellationPolicy/stopWaiting`` is the per-call default: cancellation after
 admission releases that caller while close continues under its original deadline.
@@ -124,7 +127,7 @@ Overlapping pings throw concurrentOperation. There is no automatic heartbeat or 
 
 ``WebSocketConnection`` supplies complete-message receive, pong completion, close and synchronous
 idempotent abort. Its operations must cooperate with abort and release resources promptly.
-A normal receive end requires peer close metadata to be available already; an absent close is a
+A normal receive end requires backend closure metadata to be available already; an absent close is a
 protocol failure. Backends must support receive and controls concurrently. Conformance requires
 live qualification beyond the scripted shared-core tests.
 

@@ -1,7 +1,7 @@
 import Synchronization
 
 /// A shared result whose observers can leave independently of the operation.
-final class WebSocketCompletion<Value: Sendable>: Sendable {
+package final class WebSocketCompletion<Value: Sendable>: Sendable {
   private typealias Waiter = CheckedContinuation<Result<Value, WebSocketError>, Never>
 
   private struct State {
@@ -13,7 +13,9 @@ final class WebSocketCompletion<Value: Sendable>: Sendable {
 
   private let state = Mutex(State())
 
-  func finish(_ result: Result<Value, WebSocketError>) {
+  package init() {}
+
+  package func finish(_ result: Result<Value, WebSocketError>) {
     let waiters = state.withLock { state -> [Waiter] in
       guard state.result == nil else { return [] }
       state.result = result
@@ -24,7 +26,7 @@ final class WebSocketCompletion<Value: Sendable>: Sendable {
     for waiter in waiters { waiter.resume(returning: result) }
   }
 
-  func wait() async throws(WebSocketError) -> Value {
+  package func wait() async throws(WebSocketError) -> Value {
     let ticket = Ticket()
     let id = ObjectIdentifier(ticket)
     let result: Result<Value, WebSocketError> = await withTaskCancellationHandler {

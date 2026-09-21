@@ -102,12 +102,12 @@ jobs:
           cp -R "$found" .docc-deps/WebSocketCore.doccarchive
           test -f .docc-deps/WebSocketCore.doccarchive/linkable-entities.json
 
-      # Both dependent products resolve against the staged core archives, and publish their own link
+      # Dependent products resolve against the staged core archives, and publish their own link
       # metadata too so the set stays symmetrical if something later needs to link into one of them.
       - name: Build dependent product documentation
         run: |
           set -o pipefail
-          for scheme in HTTPURLSession HTTPTesting; do
+          for scheme in HTTPTesting HTTPURLSession WebSocketURLSession; do
             xcodebuild docbuild \
               -scheme "$scheme" \
               -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.2' \
@@ -122,7 +122,7 @@ jobs:
         run: |
           set -euo pipefail
           archives=(.docc-deps/HTTPCore.doccarchive .docc-deps/WebSocketCore.doccarchive)
-          for module in HTTPURLSession HTTPTesting; do
+          for module in HTTPTesting HTTPURLSession WebSocketURLSession; do
             found="$(find .derivedData -type d -name "${module}.doccarchive" | head -1)"
             if [ -z "$found" ]; then
               echo "::error::no ${module}.doccarchive under .derivedData"

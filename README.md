@@ -12,8 +12,8 @@ test support included.
 
 The unreleased WebSocket core provides an injected client, explicit connection ownership, a bounded
 message inbox and send queue, synchronous submission, shared send completion and graceful close.
-Limits, admission and failure policies, and operation deadlines are configurable. Network adapters
-are not yet implemented.
+Limits, admission and failure policies, and operation deadlines are configurable. The URLSession
+WebSocket adapter is implemented; portable and Hummingbird adapters are not yet implemented.
 
 ## In under a minute
 
@@ -486,7 +486,8 @@ import Testing
   HummingbirdWebSocket 2.7.0+ for macOS/Linux adapter scaffolding. It does not require
   `WebSocketPortable`. Default and client-only consumers do not resolve Hummingbird.
 - These WebSocket traits currently enable dependency scaffolding, not usable network adapters.
-  WebSocket runtime support on Apple, Linux and Android is not yet qualified.
+  The URLSession adapter is tested on macOS 27 and iOS 26.5 simulator. Other Apple platforms,
+  devices, Linux and Android WebSocket runtimes remain unqualified.
 
 ## Products
 
@@ -503,7 +504,7 @@ retain their existing HTTPCore dependency.
 | `WebSocketCore` | Injected client, bounded receive/send queues, synchronous submission, shared completion, graceful close and backend protocols. |
 | `WebSocketHummingbird` | Independently trait-gated server adapter scaffolding; no live adapter yet. |
 | `WebSocketPortable` | Independently trait-gated NIO client scaffolding; no live transport yet. |
-| `WebSocketURLSession` | Darwin-only client scaffolding; no live transport yet. |
+| `WebSocketURLSession` | Apple WebSocket client using an owned URLSession. |
 
 ### WebSocket connection ownership
 
@@ -523,7 +524,7 @@ Defaults are configurable through `WebSocket.Options`: 1 MiB per message, a 1 Mi
 UTF-8 bytes and empty messages count toward capacity. Overflow is terminal and attempts a bounded
 policy close before aborting when no data write or close frame is active; otherwise it aborts directly.
 These bounds exclude backend buffers and copies.
-Normal peer close drains the inbox; terminal failures discard it.
+Backend-reported closure drains the inbox; terminal failures discard it.
 
 ### WebSocket sending and close
 
@@ -564,7 +565,32 @@ wait. Reasons are limited to 123 UTF-8 bytes. After admission, cancellation defa
 leaving the close running; `close(cancellation: .abortConnection)` aborts for every waiter instead.
 Pre-cancelled calls start nothing. Timeout aborts the connection and releases all waiters.
 
-Network adapters remain scaffolding; these APIs currently operate through injected backends.
+Use the Apple adapter through the same injected client:
+
+```swift
+import WebSocketCore
+import WebSocketURLSession
+
+let client = WebSocketClient(transport: URLSessionWebSocketTransport())
+try await client.withConnection(to: endpoint) { socket in
+  try await socket.send("subscribe")
+  for try await message in socket.messages {
+    handle(message)
+  }
+}
+```
+
+The adapter refuses redirects and automatic credential/cookie storage. It uses system TLS trust
+validation, preserves available failed-upgrade status, and delegates authentication replay to the
+shared client. Foundation can retry connection establishment internally; one adapter attempt creates
+one URLSession task. Unknown HTTP status never triggers credential refresh.
+
+close() requests orderly shutdown and awaits backend completion within closeTimeout.
+Its result and closeInfo are backend-reported metadata, which can reflect our locally requested
+code and reason. Success does not prove a peer close acknowledgement or application delivery.
+
+The shared limits bound our queues. Foundation's internal buffers, TCP/TLS buffers and temporary
+copies are outside that accounting. Portable and Hummingbird adapters remain scaffolding.
 
 ### Scripted WebSocket support
 
@@ -589,7 +615,7 @@ shared client and lifecycle. They do not establish live network compatibility.
 
 ## Documentation
 
-The API reference for `HTTPCore`, `HTTPURLSession`, and `HTTPTesting` is at
+The published API reference for `HTTPCore`, `HTTPURLSession`, and `HTTPTesting` is at
 **[kalebcooper.github.io/swifty-networking](https://kalebcooper.github.io/swifty-networking/documentation/)**,
 rebuilt from `main` on every push to it. Nine articles accompany it:
 
@@ -606,7 +632,9 @@ rebuilt from `main` on every push to it. Nine articles accompany it:
 | [Bridging Observable State to Request Replay](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/observations/) | Driving a request from an `@Observable` model with `Observations` |
 
 The [WebSocketCore reference](Sources/WebSocketCore/WebSocketCore.docc/WebSocketCore.md)
-describes the unreleased connection API, backend contract and current limits.
+describes the unreleased connection API, backend contract and current limits. The
+[WebSocketURLSession guide](Sources/WebSocketURLSession/WebSocketURLSession.docc/WebSocketURLSession.md)
+describes the Apple adapter and its qualification limits.
 
 Or build them locally in Xcode with **Product ▸ Build Documentation**. `HTTPPortable`'s reference
 builds from its own catalog with the trait enabled; the site does not carry it. `LoggingObserver` is

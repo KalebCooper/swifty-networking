@@ -48,7 +48,7 @@ public final class ScriptedWebSocketConnection: WebSocketConnection {
     }
   }
 
-  /// Explicitly seeded peer close metadata, independent of scripted outcomes.
+  /// Explicitly seeded backend close metadata, independent of scripted outcomes.
   public let closeInfo: WebSocketClose?
   /// Explicitly seeded negotiated subprotocol.
   public let negotiatedSubprotocol: String?

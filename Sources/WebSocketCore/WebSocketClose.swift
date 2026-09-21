@@ -1,11 +1,12 @@
-/// Close metadata reported by a peer.
+/// Closure metadata reported by a backend.
 ///
-/// This value does not imply that a close handshake completed successfully.
+/// This value does not prove peer acknowledgement or a completed wire close handshake.
+/// For a locally initiated close, a backend may report the requested code and reason.
 public struct WebSocketClose: Equatable, Sendable {
-  /// The raw peer code, or nil when the peer supplied no code.
+  /// The reported raw code, or nil when no code was supplied.
   public let code: WebSocket.CloseCode?
 
-  /// The peer's optional reason, which may contain sensitive application data.
+  /// The reported optional reason, which may contain sensitive application data.
   public let reason: String?
 
   /// Creates close metadata without inferring a code for an empty close payload.

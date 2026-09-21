@@ -7,27 +7,12 @@ import Foundation
 import HTTPTesting
 import Testing
 import WebSocketCore
+import WebSocketTestSupport
 
 @Suite("WebSocket lifecycle", .timeLimit(.minutes(suiteTimeLimitMinutes)))
 @MainActor
 struct WebSocketLifecycleTests {
   private enum ApplicationFailure: Error { case expected }
-
-  private struct CompletionClock: Clock {
-    typealias Duration = Swift.Duration
-    typealias Instant = RecordingClock.Instant
-
-    let completed = WebSocketRendezvous()
-    let underlying = RecordingClock()
-
-    var minimumResolution: Duration { .zero }
-    var now: Instant { underlying.now }
-
-    func sleep(until deadline: Instant, tolerance: Duration?) async throws {
-      defer { completed.arrive() }
-      try await underlying.sleep(until: deadline, tolerance: tolerance)
-    }
-  }
 
   private struct LifetimeTransport: WebSocketTransport {
     let released: WebSocketRendezvous
@@ -290,7 +275,7 @@ struct WebSocketLifecycleTests {
 
   @Test("The last external owner releases backend state and every registered timer")
   func internalTasksDoNotRetainConnection() async throws {
-    let clock = CompletionClock()
+    let clock = WebSocketCompletionClock()
     let parked = WebSocketRendezvous()
     let pong = WebSocketRendezvous()
     let released = WebSocketRendezvous()
@@ -358,7 +343,7 @@ struct WebSocketLifecycleTests {
 
   @Test("A late pong frees a cancelled caller's slot without extending the next probe's deadline")
   func latePongFreesSlot() async throws {
-    let clock = CompletionClock()
+    let clock = WebSocketCompletionClock()
     let receive = WebSocketRendezvous()
     let pong = WebSocketRendezvous()
     let nextPong = WebSocketRendezvous()

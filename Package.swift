@@ -149,13 +149,16 @@ let package = Package(
     ),
     .target(
       name: "WebSocketTestSupport",
-      dependencies: ["WebSocketCore"],
+      dependencies: ["HTTPTesting", "WebSocketCore"],
       path: "Tests/WebSocketTestSupport",
       swiftSettings: swiftSettings
     ),
     .target(
       name: "WebSocketURLSession",
-      dependencies: ["WebSocketCore"],
+      dependencies: [
+        .product(name: "HTTPTypes", package: "swift-http-types"),
+        .product(name: "HTTPTypesFoundation", package: "swift-http-types"), "WebSocketCore",
+      ],
       swiftSettings: swiftSettings
     ),
     // The swift-log edge is the suite for `LoggingObserver`, which is written against a `Logger` and
@@ -214,6 +217,13 @@ let package = Package(
       dependencies: [
         "HTTPCore", "HTTPTesting", .product(name: "HTTPTypes", package: "swift-http-types"),
         "WebSocketCore", "WebSocketTestSupport",
+      ],
+      swiftSettings: swiftSettings
+    ),
+    .testTarget(
+      name: "WebSocketURLSessionTests",
+      dependencies: [
+        "HTTPCore", "HTTPTesting", "WebSocketCore", "WebSocketTestSupport", "WebSocketURLSession",
       ],
       swiftSettings: swiftSettings
     ),

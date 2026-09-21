@@ -4,7 +4,7 @@ import Synchronization
 ///
 /// Creating a sequence or iterator starts no additional receive work. The first next() claims the
 /// reader until completion, cancellation or release of the last iterator copy. Cancellation
-/// preserves unread messages for a new iterator. Normal peer close drains the inbox; failures
+/// preserves unread messages for a new iterator. Backend-reported closure drains the inbox; failures
 /// discard it. Competing readers fail concurrentOperation without disturbing the owner.
 public struct WebSocketMessages: AsyncSequence, Sendable {
   /// One complete text or binary message.

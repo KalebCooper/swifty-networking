@@ -16,7 +16,7 @@ public final class WebSocket: Sendable {
     session.start()
   }
 
-  /// The observed peer close, preserving absent codes and application-defined codes.
+  /// Backend-reported closure metadata; it does not prove peer acknowledgement.
   public var closeInfo: WebSocketClose? { owner.session.closeInfo }
   /// A lazy reader view of the connection's existing receive pump.
   public var messages: WebSocketMessages { WebSocketMessages(owner: owner) }
@@ -26,13 +26,15 @@ public final class WebSocket: Sendable {
   /// Aborts this connection and releases pending operations. Repeated calls have no effect.
   public func cancel() { owner.session.cancel() }
 
-  /// Finishes the active write, rejects queued sends, and awaits the peer's close.
+  /// Finishes the active write, rejects queued sends, and awaits backend close completion.
   ///
   /// The first valid code and reason win; repeated calls join that close and its original
   /// closeTimeout, including time spent waiting for the active write. Invalid input has no effect.
   /// A reason may occupy at most 123 UTF-8 bytes. Reserved wire codes throw invalidRequest.
   /// Cancellation before admission starts nothing. After admission, cancellation follows the
   /// caller's policy. A deadline or backend failure aborts the connection.
+  /// Success reports backend completion, not verified peer acknowledgement. Returned metadata
+  /// may describe the locally requested close.
   @discardableResult
   public func close(
     cancellation: CloseCancellationPolicy = .stopWaiting,

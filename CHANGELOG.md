@@ -13,6 +13,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Apple WebSocket connections through URLSessionWebSocketTransport, with owned sessions, redirect
+  refusal, explicit credentials, bounded shared queues, recoverable read/ping waits and physical
+  cancellation. Close returns backend-reported metadata and does not promise peer acknowledgement.
+
 - WebSocket async send and synchronous enqueue share one bounded FIFO with configurable message/byte
   capacities, admission/failure policies, per-call policy overrides and a 30-second send deadline
   including queue residence. SendOperation supports independent waiters and repeatable results.
