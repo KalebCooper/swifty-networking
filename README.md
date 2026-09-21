@@ -11,8 +11,9 @@ back a decoded value, a raw response, or a stream of bytes, with a single typed 
 test support included.
 
 The unreleased WebSocket core provides an injected client, explicit connection ownership, a bounded
-message inbox, recoverable reader cancellation and configurable connect, ping and close deadlines.
-Network adapters, application sending and caller-initiated graceful close are not yet implemented.
+message inbox and send queue, synchronous submission, shared send completion and graceful close.
+Limits, admission and failure policies, and operation deadlines are configurable. Network adapters
+are not yet implemented.
 
 ## In under a minute
 
@@ -499,7 +500,7 @@ retain their existing HTTPCore dependency.
 | `HTTPPortable` | The AsyncHTTPClient transport, buffered and streaming, behind the `HTTPPortable` trait. |
 | `HTTPTesting` | HTTP fixtures, mocks and clocks, plus `MockWebSocketTransport`, `ScriptedWebSocketConnection`, and `WebSocketRendezvous`. |
 | `HTTPURLSession` | The `URLSession` transport, buffered and streaming. |
-| `WebSocketCore` | Injected client, connection lifecycle, bounded inbox, message sequence, ping deadlines and backend protocols. |
+| `WebSocketCore` | Injected client, bounded receive/send queues, synchronous submission, shared completion, graceful close and backend protocols. |
 | `WebSocketHummingbird` | Independently trait-gated server adapter scaffolding; no live adapter yet. |
 | `WebSocketPortable` | Independently trait-gated NIO client scaffolding; no live transport yet. |
 | `WebSocketURLSession` | Darwin-only client scaffolding; no live transport yet. |
@@ -520,11 +521,50 @@ terminates the connection. There is no automatic heartbeat or reconnect.
 Defaults are configurable through `WebSocket.Options`: 1 MiB per message, a 1 MiB / 16-message inbox,
 30 seconds for connecting, 10 seconds for ping, and 5 seconds for bounded close attempts. Text counts
 UTF-8 bytes and empty messages count toward capacity. Overflow is terminal and attempts a bounded
-policy close before aborting. These bounds exclude backend buffers and copies.
+policy close before aborting when no data write or close frame is active; otherwise it aborts directly.
+These bounds exclude backend buffers and copies.
 Normal peer close drains the inbox; terminal failures discard it.
 
-Network adapters remain scaffolding. The core currently supports receiving, ping and cancellation
-through injected backends; application sends and caller-initiated graceful close are still pending.
+### WebSocket sending and close
+
+`send` and synchronous `enqueue` accept `String`, `Data`, or `WebSocket.Message` through one bounded
+FIFO. Sequential enqueue calls establish order immediately; concurrent producers are ordered at
+admission. Neither entry point waits for capacity. Defaults allow 16 active-plus-queued messages and
+1 MiB of payload, with a configurable 30-second `sendTimeout` covering queue residence and writing.
+
+`sendPolicy` defaults to `.serialize`; `.rejectOverlapping` instead rejects while a send is
+outstanding. `sendFailurePolicy` defaults to `.preserveIfUnsent`, which removes only an unstarted
+failed send; `.abortConnection` also prevents later dependent messages from starting. Failure after
+writing begins always aborts because part of the message may already have reached the peer.
+Both policies have per-call overrides. Capacities and deadlines come from options captured at connect.
+
+```swift
+func sendUpdates(on socket: WebSocket) async throws {
+  let first = try socket.enqueue("first")
+  let second = try socket.enqueue("second", policy: .serialize)
+  try await first.wait()
+  try await second.wait()
+  try await socket.send("last", failurePolicy: .abortConnection)
+  try await socket.close()
+}
+```
+
+A `SendOperation` supports multiple waiters and repeatable results. Cancelling a `wait()` detaches
+only that waiter; `operation.cancel()` cancels the send using its failure policy. Cancelling async
+`send` cancels its operation. Dropping an operation does not cancel it, and retaining one does not
+keep the socket alive. Keep a socket owner until the work ends.
+
+Write completion is not an application acknowledgement or proof of remote execution. Dependent
+commands still need application ordering and acknowledgements; independent updates can handle
+rejection or coalesce before submission.
+
+`close()` stops admission, rejects queued sends, waits for the active write and then sends the
+close frame. Repeated calls share the first valid code, reason and deadline, including the active-write
+wait. Reasons are limited to 123 UTF-8 bytes. After admission, cancellation defaults to `.stopWaiting`,
+leaving the close running; `close(cancellation: .abortConnection)` aborts for every waiter instead.
+Pre-cancelled calls start nothing. Timeout aborts the connection and releases all waiters.
+
+Network adapters remain scaffolding; these APIs currently operate through injected backends.
 
 ### Scripted WebSocket support
 

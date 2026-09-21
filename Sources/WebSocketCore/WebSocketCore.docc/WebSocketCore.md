@@ -1,13 +1,12 @@
 # ``WebSocketCore``
 
-Own a WebSocket connection through an injected backend, with bounded receiving and explicit cleanup.
+Own a WebSocket connection through an injected backend, with bounded receiving and sending, configurable policies and explicit cleanup.
 
 ## Overview
 
 ``WebSocketClient`` opens a ``WebSocket`` using a ``WebSocketTransport``. The client accepts
 a request or URL, defaults to ContinuousClock, and supports an injected clock. Network adapters
-are not yet implemented or qualified. Application sending and caller-initiated graceful close
-are not yet exposed on the shared handle.
+are not yet implemented or qualified.
 
 Opening validates options and requests before credential or backend work. Authentication retains
 the same refresh identity as HTTP. One configurable connectTimeout, thirty seconds by default,
@@ -39,10 +38,79 @@ overflow. These bounds cover the completed-message inbox plus one message being 
 bookkeeping overhead; backend buffers and copies remain outside this accounting.
 
 Overflow fails the connection with bufferOverflow; an oversized message reports messageTooLarge.
-Buffered payloads are released on failure. The core attempts a bounded close with code 1008
-or 1009 respectively, then aborts the backend. closeTimeout defaults to five seconds.
+Buffered payloads are released on failure. When no data write or close frame is active, the core attempts a bounded close with code 1008
+or 1009 respectively, then aborts the backend. Otherwise it aborts directly to avoid interleaving
+frames. closeTimeout defaults to five seconds.
 A valid peer close drains already buffered messages before ending the sequence.
 ``WebSocketClose`` preserves an absent code and raw application-defined codes.
+
+### Sending and Completion
+
+Async send and synchronous enqueue accept String, Data or ``WebSocket/Message`` through one
+FIFO. Sequential enqueue calls establish admission order before returning. Concurrent producers
+are ordered by admission, not by task creation. Each admitted message reaches one backend data
+writer; receiving and ping may continue concurrently.
+
+``WebSocket/Options`` defaults to 16 active-plus-queued sends and 1 MiB of pending payload.
+Empty messages count; text counts UTF-8 bytes. Both limits are configurable above or below these
+defaults, and maxPendingSendBytes must accommodate maxMessageBytes. Options are captured at connect.
+Neither send nor enqueue waits for capacity: rejection is immediate, without hidden capacity waiters.
+These limits bound retained send payloads and entries, not backend buffers, copies or result observers.
+
+The connection's sendPolicy defaults to ``WebSocket/SendPolicy/serialize``.
+``WebSocket/SendPolicy/rejectOverlapping`` rejects a send with concurrentOperation while another
+is outstanding. Serialization admits behind it within capacity, otherwise throwing sendQueueFull.
+An individual message over maxMessageBytes throws messageTooLarge.
+
+The sendFailurePolicy defaults to ``WebSocket/SendFailurePolicy/preserveIfUnsent``: cancellation,
+deadline expiry or rejection before writing fails only that operation and releases its capacity.
+``WebSocket/SendFailurePolicy/abortConnection`` also aborts the session, preventing later dependent
+messages from starting. Both policies abort once writing has started, because a partial message may
+have reached the peer. Each send/enqueue can override either policy without changing the connection's
+defaults or reordering surviving entries.
+
+The configurable sendTimeout defaults to thirty seconds. Its single budget covers admission, queue
+residence and the backend write; dequeue never starts a fresh budget. A queued cancellation or expiry
+racing write start either removes the unstarted entry or aborts the connection if writing won.
+Send attempts against a closing or terminal connection cannot restart it.
+
+```swift
+func sendUpdates(on socket: WebSocket) async throws {
+  let first = try socket.enqueue("first")
+  let second = try socket.enqueue("second", policy: .serialize)
+  try await first.wait()
+  try await second.wait()
+  try await socket.send("last", failurePolicy: .abortConnection)
+}
+```
+
+``WebSocket/SendOperation`` is an admitted send's shared result. Multiple callers can await it,
+and later waits return the same result. Cancelling wait() detaches only that observer. Explicit
+cancel() cancels the operation according to its failure policy; cancelling async send does the same
+for its owned operation. Dropping a SendOperation does not cancel the send. Retaining one keeps
+neither its payload after settlement nor the external socket ownership alive. Scope exit or release
+of the last socket/message/iterator owner aborts outstanding work and settles escaped operations.
+
+Completion means the backend finished writing. It neither acknowledges application receipt nor
+guarantees remote execution. Failure does not prove that nothing reached the peer. Dependent commands
+need application ordering and acknowledgements in addition to abortConnection; independent updates
+can handle rejection or coalesce before admission. There is no automatic retry or reconnect.
+
+### Graceful Close
+
+close() atomically stops send admission and rejects queued sends with closed, regardless of those
+sends' failure policies. It waits only for the active write before starting the close frame. Repeated
+calls join the same attempt: the first valid code and reason win, with one closeTimeout including
+the active-write wait. Invalid codes or reasons longer than 123 UTF-8 bytes throw invalidRequest
+without altering the connection. Raw application codes 3000 through 4999 are accepted.
+The returned ``WebSocketClose`` preserves the peer's actual metadata, including an absent code.
+
+``WebSocket/CloseCancellationPolicy/stopWaiting`` is the per-call default: cancellation after
+admission releases that caller while close continues under its original deadline.
+``WebSocket/CloseCancellationPolicy/abortConnection`` aborts the connection and all joined callers
+instead. Pre-cancellation starts nothing under either policy; cancellation cannot undo an already
+completed close. A deadline or backend failure aborts and releases all waiters. Explicit cancel()
+always aborts rather than awaiting a handshake.
 
 ### Ping and Cancellation
 
@@ -65,8 +133,6 @@ Scripts record calls and return seeded outcomes; they do not implement lifecycle
 Synchronous cancel records an abort without consuming an asynchronous step. The remaining
 operations consume the same explicit FIFO; tests use gates to establish ordering.
 
-``WebSocket/Options`` also retains send capacities and policies for the forthcoming send surface.
-Those configuration values do not currently implement an application send queue.
 ``WebSocketError`` descriptions omit arbitrary diagnostic strings, while raw response, close and
 underlying-error properties may contain sensitive information.
 
@@ -82,9 +148,11 @@ underlying-error properties may contain sensitive information.
 
 ### Messages and Configuration
 
+- ``WebSocket/CloseCancellationPolicy``
 - ``WebSocket/Message``
 - ``WebSocket/Options``
 - ``WebSocket/SendFailurePolicy``
+- ``WebSocket/SendOperation``
 - ``WebSocket/SendPolicy``
 
 ### Handshake Inputs and Diagnostics

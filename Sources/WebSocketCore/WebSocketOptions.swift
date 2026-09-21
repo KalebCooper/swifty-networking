@@ -29,7 +29,8 @@ extension WebSocket {
 
     /// The payload-byte capacity for active and queued sends together.
     ///
-    /// The default is 1 MiB. A live connection requires a positive capacity.
+    /// The default is 1 MiB. A live connection requires a positive capacity at least
+    /// as large as maxMessageBytes. Text counts its UTF-8 bytes.
     public var maxPendingSendBytes: Int
 
     /// The message capacity for active and queued sends together, including empty messages.
@@ -46,6 +47,9 @@ extension WebSocket {
     /// The connection's default admission policy for overlapping sends.
     public var sendPolicy: SendPolicy
 
+    /// One budget for admission, queue residence and writing; defaults to thirty seconds.
+    public var sendTimeout: Duration
+
     /// Creates message and send configuration with caller-adjustable capacities.
     public init(
       closeTimeout: Duration = .seconds(5),
@@ -57,7 +61,8 @@ extension WebSocket {
       maxPendingSendMessages: Int = 16,
       pingTimeout: Duration = .seconds(10),
       sendFailurePolicy: SendFailurePolicy = .preserveIfUnsent,
-      sendPolicy: SendPolicy = .serialize
+      sendPolicy: SendPolicy = .serialize,
+      sendTimeout: Duration = .seconds(30)
     ) {
       self.closeTimeout = closeTimeout
       self.connectTimeout = connectTimeout
@@ -69,10 +74,11 @@ extension WebSocket {
       self.pingTimeout = pingTimeout
       self.sendFailurePolicy = sendFailurePolicy
       self.sendPolicy = sendPolicy
+      self.sendTimeout = sendTimeout
     }
 
     func validate() throws(WebSocketError) {
-      guard closeTimeout > .zero, connectTimeout > .zero, pingTimeout > .zero,
+      guard closeTimeout > .zero, connectTimeout > .zero, pingTimeout > .zero, sendTimeout > .zero,
         maxBufferedBytes >= maxMessageBytes, maxBufferedMessages > 0, maxMessageBytes > 0,
         maxPendingSendBytes >= maxMessageBytes, maxPendingSendMessages > 0
       else { throw WebSocketError(kind: .invalidRequest) }

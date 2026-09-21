@@ -13,11 +13,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- WebSocket async send and synchronous enqueue share one bounded FIFO with configurable message/byte
+  capacities, admission/failure policies, per-call policy overrides and a 30-second send deadline
+  including queue residence. SendOperation supports independent waiters and repeatable results.
+- Graceful WebSocket close rejects queued sends, waits for the active write, and joins repeated
+  callers under one deadline. Per-call cancellation can stop waiting or abort the connection.
+
 - Shared WebSocket connection lifecycle with an injected client, result-returning scoped
   conveniences, explicit external ownership, a recoverable single-reader message sequence,
   bounded receiving and exactly-once terminal settlement.
 - Configurable WebSocket receive limits default to 1 MiB per message and a 1 MiB / 16-message
-  inbox. Overflow is terminal and attempts a bounded policy close. Connect, ping and close
+  inbox. Overflow is terminal and attempts a bounded policy close when no write is active.
+  Connect, ping and close
   defaults are 30, 10 and 5 seconds respectively. Cancelling a ping caller preserves its
   outstanding probe and original deadline; timeout terminates the connection.
 - Shared WebSocket opening policy with request validation, shared authentication, one eligible
@@ -26,8 +33,8 @@ All notable changes to this project are documented here. The format follows
 - `WebSocketCore` value types for text/binary messages, raw close codes, close metadata,
   outbound requests, extensible errors, and configurable send limits and policies.
 - `WebSocketURLSession`, `WebSocketPortable`, and `WebSocketHummingbird` product scaffolding.
-  Portable client and server dependencies have independent default-off traits. Network adapters,
-  application sends and caller-initiated graceful close remain unimplemented.
+  Portable client and server dependencies have independent default-off traits. Network adapters
+  remain unimplemented.
 - `MockWebSocketTransport`, `ScriptedWebSocketConnection`, `WebSocketRendezvous`, and explicit
   script-exhaustion errors in `HTTPTesting`, which now depends on `WebSocketCore`.
 - A WebSocketCore reference catalog and isolated consumer dependency-graph verification.
