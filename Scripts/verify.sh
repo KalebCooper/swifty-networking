@@ -338,6 +338,11 @@ SELF_TESTABLE=(
 
 run_all() {
   for check in "${SELF_TESTABLE[@]}"; do "$check"; done
+  if python3 "$ROOT/Scripts/verify-websocket.py"; then
+    pass "WebSocket invariants"
+  else
+    fail "WebSocket invariants"
+  fi
   check_nothing_local_tracked
 }
 
@@ -678,6 +683,11 @@ self_test() {
     fi
   done
   printf '%d self-test arms\n' "$arms"
+  if python3 "$ROOT/Scripts/verify-websocket.py" --self-test; then
+    pass "WebSocket invariant self-tests"
+  else
+    fail "WebSocket invariant self-tests"
+  fi
 }
 
 # ---------------------------------------------------------------------------------------------------

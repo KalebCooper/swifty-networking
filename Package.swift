@@ -2,10 +2,7 @@
 
 import PackageDescription
 
-// Four products, one dependency direction: HTTPCore knows nothing about any network stack,
-// HTTPURLSession binds it to Apple's, HTTPPortable binds it to SwiftNIO's behind a trait, and
-// HTTPTesting ships the test types and fixtures as a real product instead of trapping them in a test
-// target.
+// HTTP and WebSocket foundations remain independent of the opt-in network stacks.
 let package = Package(
   name: "swifty-networking",
   platforms: [
@@ -16,6 +13,10 @@ let package = Package(
     .library(name: "HTTPPortable", targets: ["HTTPPortable"]),
     .library(name: "HTTPTesting", targets: ["HTTPTesting"]),
     .library(name: "HTTPURLSession", targets: ["HTTPURLSession"]),
+    .library(name: "WebSocketCore", targets: ["WebSocketCore"]),
+    .library(name: "WebSocketHummingbird", targets: ["WebSocketHummingbird"]),
+    .library(name: "WebSocketPortable", targets: ["WebSocketPortable"]),
+    .library(name: "WebSocketURLSession", targets: ["WebSocketURLSession"]),
   ],
   traits: [
     // Nothing is on by default, stated at the declaration site rather than left to SwiftPM's implicit
@@ -30,12 +31,18 @@ let package = Package(
       name: "Logging",
       description: "Ship the swift-log adapter for TransportObserver."
     ),
+    .trait(
+      name: "WebSocketHummingbird",
+      description: "Include Hummingbird WebSocket adapter dependencies."),
+    .trait(
+      name: "WebSocketPortable", description: "Include the NIO WebSocket client dependencies."),
   ],
   dependencies: [
-    // The portable transport sends through AsyncHTTPClient, and its tests answer from a SwiftNIO
-    // server, so both packages are declared here; every edge into them is guarded by the
-    // `HTTPPortable` trait, and SwiftPM resolves neither for a consumer who leaves it off.
+    // Each optional network stack is reachable only through its own trait-guarded edges.
     .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.36.1"),
+    .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.26.0"),
+    .package(
+      url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.7.0"),
     // Default traits are taken as they come: the Darwin transport needs `HTTPTypesFoundation`, which
     // is written against the URL conveniences the `FoundationURL` trait guards and does not compile
     // without them. HTTPCore reads `HTTPRequest.url` from that trait to build the URL its events
@@ -43,6 +50,7 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-http-types.git", from: "1.6.0"),
     .package(url: "https://github.com/apple/swift-log.git", from: "1.15.0"),
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.102.0"),
+    .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.37.4"),
   ],
   targets: [
     .target(
@@ -76,19 +84,78 @@ let package = Package(
         .product(
           name: "NIOFoundationCompat", package: "swift-nio",
           condition: .when(traits: ["HTTPPortable"])),
-        .product(name: "NIOHTTP1", package: "swift-nio", condition: .when(traits: ["HTTPPortable"])),
-        .product(name: "NIOPosix", package: "swift-nio", condition: .when(traits: ["HTTPPortable"])),
+        .product(
+          name: "NIOHTTP1", package: "swift-nio", condition: .when(traits: ["HTTPPortable"])),
+        .product(
+          name: "NIOPosix", package: "swift-nio", condition: .when(traits: ["HTTPPortable"])),
         .product(
           name: "_NIOFileSystem", package: "swift-nio", condition: .when(traits: ["HTTPPortable"])),
       ],
       swiftSettings: swiftSettings
     ),
-    .target(name: "HTTPTesting", dependencies: ["HTTPCore"], swiftSettings: swiftSettings),
+    .target(
+      name: "HTTPTesting",
+      dependencies: [
+        "HTTPCore", .product(name: "HTTPTypes", package: "swift-http-types"), "WebSocketCore",
+      ],
+      swiftSettings: swiftSettings
+    ),
     .target(
       name: "HTTPURLSession",
       dependencies: [
         "HTTPCore", .product(name: "HTTPTypesFoundation", package: "swift-http-types"),
       ],
+      swiftSettings: swiftSettings
+    ),
+
+    .target(
+      name: "WebSocketCore",
+      dependencies: ["HTTPCore", .product(name: "HTTPTypes", package: "swift-http-types")],
+      swiftSettings: swiftSettings
+    ),
+    .target(
+      name: "WebSocketHummingbird",
+      dependencies: [
+        .product(
+          name: "Hummingbird", package: "hummingbird",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        .product(
+          name: "HummingbirdWebSocket", package: "hummingbird-websocket",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        "WebSocketCore",
+      ],
+      swiftSettings: swiftSettings
+    ),
+    .target(
+      name: "WebSocketPortable",
+      dependencies: [
+        .product(
+          name: "NIOCore", package: "swift-nio", condition: .when(traits: ["WebSocketPortable"])),
+        .product(
+          name: "NIOFoundationCompat", package: "swift-nio",
+          condition: .when(traits: ["WebSocketPortable"])),
+        .product(
+          name: "NIOHTTP1", package: "swift-nio", condition: .when(traits: ["WebSocketPortable"])),
+        .product(
+          name: "NIOPosix", package: "swift-nio", condition: .when(traits: ["WebSocketPortable"])),
+        .product(
+          name: "NIOSSL", package: "swift-nio-ssl", condition: .when(traits: ["WebSocketPortable"])),
+        .product(
+          name: "NIOWebSocket", package: "swift-nio",
+          condition: .when(traits: ["WebSocketPortable"])),
+        "WebSocketCore",
+      ],
+      swiftSettings: swiftSettings
+    ),
+    .target(
+      name: "WebSocketTestSupport",
+      dependencies: ["WebSocketCore"],
+      path: "Tests/WebSocketTestSupport",
+      swiftSettings: swiftSettings
+    ),
+    .target(
+      name: "WebSocketURLSession",
+      dependencies: ["WebSocketCore"],
       swiftSettings: swiftSettings
     ),
     // The swift-log edge is the suite for `LoggingObserver`, which is written against a `Logger` and
@@ -116,15 +183,22 @@ let package = Package(
           condition: .when(traits: ["HTTPPortable"])),
         "HTTPCore", "HTTPPortable", "HTTPTesting",
         .product(name: "NIOCore", package: "swift-nio", condition: .when(traits: ["HTTPPortable"])),
-        .product(name: "NIOHTTP1", package: "swift-nio", condition: .when(traits: ["HTTPPortable"])),
-        .product(name: "NIOPosix", package: "swift-nio", condition: .when(traits: ["HTTPPortable"])),
+        .product(
+          name: "NIOHTTP1", package: "swift-nio", condition: .when(traits: ["HTTPPortable"])),
+        .product(
+          name: "NIOPosix", package: "swift-nio", condition: .when(traits: ["HTTPPortable"])),
         .product(
           name: "_NIOFileSystem", package: "swift-nio", condition: .when(traits: ["HTTPPortable"])),
       ],
       swiftSettings: swiftSettings
     ),
     .testTarget(
-      name: "HTTPTestingTests", dependencies: ["HTTPCore", "HTTPTesting"], swiftSettings: swiftSettings
+      name: "HTTPTestingTests",
+      dependencies: [
+        "HTTPCore", "HTTPTesting", .product(name: "HTTPTypes", package: "swift-http-types"),
+        "WebSocketCore", "WebSocketTestSupport",
+      ],
+      swiftSettings: swiftSettings
     ),
     // The suite inside is Darwin-guarded, matching the transport it exercises; on Linux the target
     // builds to an empty binary rather than being absent, so the lane reports the same target list
@@ -132,6 +206,15 @@ let package = Package(
     .testTarget(
       name: "HTTPURLSessionTests",
       dependencies: ["HTTPCore", "HTTPTesting", "HTTPURLSession"],
+      swiftSettings: swiftSettings
+    ),
+
+    .testTarget(
+      name: "WebSocketCoreTests",
+      dependencies: [
+        "HTTPCore", "HTTPTesting", .product(name: "HTTPTypes", package: "swift-http-types"),
+        "WebSocketCore", "WebSocketTestSupport",
+      ],
       swiftSettings: swiftSettings
     ),
   ],

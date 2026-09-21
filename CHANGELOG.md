@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Added
+
+- `WebSocketCore` value types for text/binary messages, raw close codes, close metadata,
+  outbound requests, extensible errors, and configurable send limits and policies.
+- `WebSocketURLSession`, `WebSocketPortable`, and `WebSocketHummingbird` product scaffolding.
+  Portable client and server dependencies have independent default-off traits. Live connections,
+  network adapters, receive behavior and deadline defaults are not implemented yet.
+- `MockWebSocketTransport`, `ScriptedWebSocketConnection`, `WebSocketRendezvous`, and explicit
+  script-exhaustion errors in `HTTPTesting`, which now depends on `WebSocketCore`.
+- A WebSocketCore reference catalog and isolated consumer dependency-graph verification.
+
 ## 1.1.0 - 2026-09-13
 
 ### HTTPCore

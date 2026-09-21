@@ -4,9 +4,8 @@
 # that HTTPCore stays portable off Apple platforms is checked before a push instead of after one.
 # Anything Darwin-only is expected to compile out; a failure here is a real portability regression.
 #
-# `HTTPPortable` and `Logging` are enabled, the trait list the CI Linux lane runs first, so the
-# AsyncHTTPClient transport, the swift-log observer, and both their suites build and run here; this is
-# the only lane that compiles them at all.
+# `HTTPPortable` and `Logging` are enabled by default, matching the existing CI lane.
+# Set SWIFTY_NETWORKING_TRAITS to include independent WebSocket traits when checking their graph.
 #
 # Usage: ./Scripts/linux-test.sh [additional swiftpm arguments]
 #   e.g. ./Scripts/linux-test.sh --filter HTTPCoreTests
@@ -44,11 +43,15 @@ fi
 
 docker volume create "$SCRATCH_VOLUME" >/dev/null
 
+# A fresh container workspace keeps resolution away from the caller's lockfile. Only build inputs
+# are copied; the persistent scratch volume still reuses compiled dependencies. Resource limits keep
+# a compiler or test failure from consuming the host without a bound.
 # `${array[@]+...}` guards the expansion: under `set -u` the bash macOS ships rejects an empty array.
 exec docker run --rm \
-  --volume "$REPO_ROOT:/workspace" \
+  --cpus 2 --memory 4g --memory-swap 4g --pids-limit 512 \
+  --volume "$REPO_ROOT:/input:ro" \
   --volume "$SCRATCH_VOLUME:/scratch" \
   --workdir /workspace \
   "$IMAGE" \
-  swift test --scratch-path /scratch \
+  bash -c 'cp /input/Package.swift .; cp -R /input/Sources /input/Tests .; swift test --scratch-path /scratch --jobs 2 "$@"' -- \
   ${traits_argument[@]+"${traits_argument[@]}"} "$@"

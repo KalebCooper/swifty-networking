@@ -10,6 +10,10 @@ A Swift networking package built on Swift concurrency. Build one client, describ
 back a decoded value, a raw response, or a stream of bytes, with a single typed error to handle and
 test support included.
 
+The unreleased WebSocket foundation provides message, request, close-metadata and error values,
+send configuration, and scripted test support. Live WebSocket connections and adapters are not yet
+implemented.
+
 ## In under a minute
 
 Add the package, then build a client and make a typed request:
@@ -42,7 +46,7 @@ more to the same initializer, and none of them changes how a request is written.
   `Authorization`, `Cookie`, `Proxy-Authorization`, and the credential field kept off any hop to
   another origin, whoever set them, and every hop reported to the observer. A transport never
   follows one on its own.
-- Typed errors: every call throws `TransportError` and nothing else.
+- Typed HTTP errors: every HTTP call throws `TransportError` and nothing else.
 - Streaming as `AsyncSequence`: `stream(_:)` hands back a `StreamedBody`, a sequence of `Data`
   chunks, and the line splitting, NDJSON, and Server-Sent Events decoders each read one directly.
   `events(_:)` reconnects a Server-Sent Events stream on its own, carrying `Last-Event-ID` and
@@ -140,7 +144,7 @@ try await client.executeExpectingNoContent(
 
 ### Handling a failure
 
-Every call throws `TransportError`, so a `catch` binds the typed error and a status outside `2xx`
+Every HTTP call throws `TransportError`, so a `catch` binds the typed error and a status outside `2xx`
 arrives with its body and header fields attached.
 
 ```swift
@@ -474,16 +478,50 @@ import Testing
   `HTTPCore` and builds `LoggingObserver` over it; without the trait the type is absent and a default
   consumer never fetches the package.
 
+- An independent, off-by-default `WebSocketPortable` trait adds NIO 2.102.0+ and
+  NIOSSL 2.37.4+ without AsyncHTTPClient.
+- An independent, off-by-default `WebSocketHummingbird` trait adds Hummingbird 2.26.0+ and
+  HummingbirdWebSocket 2.7.0+ for macOS/Linux adapter scaffolding. It does not require
+  `WebSocketPortable`. Default and client-only consumers do not resolve Hummingbird.
+- These WebSocket traits currently enable dependency scaffolding, not usable network adapters.
+  WebSocket runtime support on Apple, Linux and Android is not yet qualified.
+
 ## Products
 
-`HTTPCore` depends on nothing in this package. The other three depend on it.
+HTTPCore depends on nothing in this package. WebSocketCore depends on HTTPCore, and HTTPTesting
+depends on both cores. The WebSocket adapter targets depend on WebSocketCore; HTTP transports
+retain their existing HTTPCore dependency.
 
 | Product | What it is |
 |---|---|
 | `HTTPCore` | The client, request and response types, the error model, and the streaming decoders. No `URLSession`. |
-| `HTTPURLSession` | The `URLSession` transport, buffered and streaming. |
 | `HTTPPortable` | The AsyncHTTPClient transport, buffered and streaming, behind the `HTTPPortable` trait. |
-| `HTTPTesting` | `MockTransport`, `RecordingClock`, `RecordingObserver`, `RecordingTokenProvider`, `StubURLProtocol`, and response fixtures. |
+| `HTTPTesting` | HTTP fixtures, mocks and clocks, plus `MockWebSocketTransport`, `ScriptedWebSocketConnection`, and `WebSocketRendezvous`. |
+| `HTTPURLSession` | The `URLSession` transport, buffered and streaming. |
+| `WebSocketCore` | Foundational message, close-code, request, error and send-configuration values. No live connection API yet. |
+| `WebSocketHummingbird` | Independently trait-gated server adapter scaffolding; no live adapter yet. |
+| `WebSocketPortable` | Independently trait-gated NIO client scaffolding; no live transport yet. |
+| `WebSocketURLSession` | Darwin-only client scaffolding; no live transport yet. |
+
+### Scripted WebSocket support
+
+Scripts return exactly the supplied outcomes. They do not implement authentication, retries,
+queue limits, or connection lifecycle policy:
+
+```swift
+import HTTPTesting
+import WebSocketCore
+
+let connection = ScriptedWebSocketConnection(steps: [
+  .init(result: .success(.message(.text("hello")))),
+  .init(result: .failure(WebSocketError(kind: .sendQueueFull))),
+])
+let first = try await connection.perform(.receive)
+```
+
+Use `WebSocketRendezvous` to await an operation's arrival and release it without sleeps.
+An exhausted script records the call and throws `WebSocketScriptFailure.noScriptedOutcome`
+inside a `WebSocketError`. Script operations are not a live backend protocol.
 
 ## Documentation
 
@@ -502,6 +540,9 @@ rebuilt from `main` on every push to it. Nine articles accompany it:
 | [Paginating a Response](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/paginating/) | `pages(_:as:next:)`, following a `Link` header or a body cursor, and `WebLink` |
 | [Testing](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/testing/) | `MockTransport`, `RecordingClock`, `RecordingObserver`, and `StubURLProtocol` |
 | [Bridging Observable State to Request Replay](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/observations/) | Driving a request from an `@Observable` model with `Observations` |
+
+The [WebSocketCore foundation reference](Sources/WebSocketCore/WebSocketCore.docc/WebSocketCore.md)
+describes the unreleased values and their current limits.
 
 Or build them locally in Xcode with **Product ▸ Build Documentation**. `HTTPPortable`'s reference
 builds from its own catalog with the trait enabled; the site does not carry it. `LoggingObserver` is

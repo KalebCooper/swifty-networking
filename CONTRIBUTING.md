@@ -49,7 +49,14 @@ the package. A change that needs a different shape is worth an issue before it i
   switch).
 - `HTTPClient` is non-generic. Injection never breaks.
 - `Transport` has one required method, `stream`. New capability arrives as a body case or an options
-  field, never as a second protocol.
+  field, never as a second HTTP protocol.
+
+WebSocket is a separate duplex capability with its own products and value types; it does not extend
+HTTP `Transport` or `StreamedBody`. Its live backend protocols and adapters are not yet implemented.
+Keep `WebSocketPortable` and `WebSocketHummingbird` independent and default off. Shared WebSocket
+test scenarios belong in the internal `WebSocketTestSupport` target; network fixture dependencies
+must remain trait-gated. Run `python3 Scripts/verify-consumer-graphs.py --output <new-directory>`
+to verify fresh consumer resolutions without changing the working lockfile.
 
 ## Pull requests
 

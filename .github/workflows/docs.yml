@@ -87,7 +87,22 @@ jobs:
           fi
           echo "archive=$PWD/.docc-deps/HTTPCore.doccarchive" >> "$GITHUB_OUTPUT"
 
-      # Both dependent products resolve against HTTPCore's staged archive, and publish their own link
+      - name: Build WebSocketCore documentation
+        run: |
+          set -euo pipefail
+          xcodebuild docbuild \
+            -scheme WebSocketCore \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.2' \
+            -derivedDataPath .derivedData-websocket \
+            -skipPackagePluginValidation \
+            OTHER_DOCC_FLAGS="--enable-experimental-external-link-support --dependency ${{ steps.core.outputs.archive }}" \
+            | xcbeautify --renderer github-actions
+          found="$(find .derivedData-websocket -type d -name 'WebSocketCore.doccarchive' | head -1)"
+          test -n "$found"
+          cp -R "$found" .docc-deps/WebSocketCore.doccarchive
+          test -f .docc-deps/WebSocketCore.doccarchive/linkable-entities.json
+
+      # Both dependent products resolve against the staged core archives, and publish their own link
       # metadata too so the set stays symmetrical if something later needs to link into one of them.
       - name: Build dependent product documentation
         run: |
@@ -98,16 +113,15 @@ jobs:
               -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.2' \
               -derivedDataPath .derivedData \
               -skipPackagePluginValidation \
-              OTHER_DOCC_FLAGS="--enable-experimental-external-link-support --dependency ${{ steps.core.outputs.archive }}" \
+            OTHER_DOCC_FLAGS="--enable-experimental-external-link-support --dependency ${{ steps.core.outputs.archive }} --dependency $PWD/.docc-deps/WebSocketCore.doccarchive" \
               | xcbeautify --renderer github-actions
           done
 
-      # Three products means three archives. A merged archive gets a synthesized landing page at
-      # /documentation/ that lists all three modules, so one site covers the whole package.
+      # A merged archive gets a synthesized landing page listing the documented modules.
       - name: Merge archives
         run: |
           set -euo pipefail
-          archives=(.docc-deps/HTTPCore.doccarchive)
+          archives=(.docc-deps/HTTPCore.doccarchive .docc-deps/WebSocketCore.doccarchive)
           for module in HTTPURLSession HTTPTesting; do
             found="$(find .derivedData -type d -name "${module}.doccarchive" | head -1)"
             if [ -z "$found" ]; then
