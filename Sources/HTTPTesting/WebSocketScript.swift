@@ -32,4 +32,8 @@ final class WebSocketScript<Input: Sendable, Output: Sendable>: Sendable {
     if let gate = answer.gate { try await gate.arriveAndWait() }
     return try answer.result.get()
   }
+
+  func record(_ input: Input) {
+    state.withLock { $0.calls.append(input) }
+  }
 }

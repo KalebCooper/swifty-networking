@@ -3,8 +3,8 @@ import WebSocketCore
 /// Records connection inputs and returns scripted connections or errors.
 ///
 /// This test type performs no network, credential, validation or retry work. It does not
-/// conform to a live transport protocol. Every call consumes exactly one answer.
-public final class MockWebSocketTransport: Sendable {
+/// infer lifecycle behavior. Every call consumes exactly one answer.
+public final class MockWebSocketTransport: WebSocketTransport {
   /// One explicit connection outcome.
   public struct Answer: Sendable {
     /// A gate reached after recording the call and consuming this answer.

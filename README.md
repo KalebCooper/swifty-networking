@@ -10,10 +10,9 @@ A Swift networking package built on Swift concurrency. Build one client, describ
 back a decoded value, a raw response, or a stream of bytes, with a single typed error to handle and
 test support included.
 
-The unreleased WebSocket foundation provides message, request, close-metadata and error values,
-send configuration, and scripted test support. Package integrations also share validated opening
-requests, authentication refresh and a whole-connect deadline. Live WebSocket clients, connections
-and adapters are not yet implemented.
+The unreleased WebSocket core provides an injected client, explicit connection ownership, a bounded
+message inbox, recoverable reader cancellation and configurable connect, ping and close deadlines.
+Network adapters, application sending and caller-initiated graceful close are not yet implemented.
 
 ## In under a minute
 
@@ -500,10 +499,32 @@ retain their existing HTTPCore dependency.
 | `HTTPPortable` | The AsyncHTTPClient transport, buffered and streaming, behind the `HTTPPortable` trait. |
 | `HTTPTesting` | HTTP fixtures, mocks and clocks, plus `MockWebSocketTransport`, `ScriptedWebSocketConnection`, and `WebSocketRendezvous`. |
 | `HTTPURLSession` | The `URLSession` transport, buffered and streaming. |
-| `WebSocketCore` | Foundational message, close-code, request, error and send-configuration values. No live connection API yet. |
+| `WebSocketCore` | Injected client, connection lifecycle, bounded inbox, message sequence, ping deadlines and backend protocols. |
 | `WebSocketHummingbird` | Independently trait-gated server adapter scaffolding; no live adapter yet. |
 | `WebSocketPortable` | Independently trait-gated NIO client scaffolding; no live transport yet. |
 | `WebSocketURLSession` | Darwin-only client scaffolding; no live transport yet. |
+
+### WebSocket connection ownership
+
+`WebSocketClient(transport:)` accepts a backend and an optional injected clock. Use
+`connect(to:options:)` for an independently owned connection or `withConnection(to:options:operation:)`
+for a result-returning scope that aborts on exit. Both also accept a `WebSocketRequest`.
+The socket, messages value and iterators retain the connection; the final external owner releases it.
+
+One iterator claims reading on its first `next()`. Its copies share that claim and reject overlapping
+reads. Cancellation releases the pending read and claim while preserving unread messages for a new
+iterator. Ordinary reader and ping-caller cancellation leave the connection healthy.
+A ping already admitted keeps its original deadline after caller cancellation; missing its pong
+terminates the connection. There is no automatic heartbeat or reconnect.
+
+Defaults are configurable through `WebSocket.Options`: 1 MiB per message, a 1 MiB / 16-message inbox,
+30 seconds for connecting, 10 seconds for ping, and 5 seconds for bounded close attempts. Text counts
+UTF-8 bytes and empty messages count toward capacity. Overflow is terminal and attempts a bounded
+policy close before aborting. These bounds exclude backend buffers and copies.
+Normal peer close drains the inbox; terminal failures discard it.
+
+Network adapters remain scaffolding. The core currently supports receiving, ping and cancellation
+through injected backends; application sends and caller-initiated graceful close are still pending.
 
 ### Scripted WebSocket support
 
@@ -523,7 +544,8 @@ let first = try await connection.perform(.receive)
 
 Use `WebSocketRendezvous` to await an operation's arrival and release it without sleeps.
 An exhausted script records the call and throws `WebSocketScriptFailure.noScriptedOutcome`
-inside a `WebSocketError`. Script operations are not a live backend protocol.
+inside a `WebSocketError`. The scripts conform to the backend protocols, so they can exercise the
+shared client and lifecycle. They do not establish live network compatibility.
 
 ## Documentation
 
@@ -543,8 +565,8 @@ rebuilt from `main` on every push to it. Nine articles accompany it:
 | [Testing](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/testing/) | `MockTransport`, `RecordingClock`, `RecordingObserver`, and `StubURLProtocol` |
 | [Bridging Observable State to Request Replay](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/observations/) | Driving a request from an `@Observable` model with `Observations` |
 
-The [WebSocketCore foundation reference](Sources/WebSocketCore/WebSocketCore.docc/WebSocketCore.md)
-describes the unreleased values and their current limits.
+The [WebSocketCore reference](Sources/WebSocketCore/WebSocketCore.docc/WebSocketCore.md)
+describes the unreleased connection API, backend contract and current limits.
 
 Or build them locally in Xcode with **Product ▸ Build Documentation**. `HTTPPortable`'s reference
 builds from its own catalog with the trait enabled; the site does not carry it. `LoggingObserver` is

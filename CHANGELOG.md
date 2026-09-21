@@ -13,15 +13,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- Package-level WebSocket opening policy with request validation, shared authentication, one
-  eligible pre-upgrade 401 replay, and a configurable 30-second whole-connect deadline. Cancelled
-  and expired callers leave promptly; late successful connections are discarded. Public live
-  clients and network adapters remain unimplemented.
+- Shared WebSocket connection lifecycle with an injected client, result-returning scoped
+  conveniences, explicit external ownership, a recoverable single-reader message sequence,
+  bounded receiving and exactly-once terminal settlement.
+- Configurable WebSocket receive limits default to 1 MiB per message and a 1 MiB / 16-message
+  inbox. Overflow is terminal and attempts a bounded policy close. Connect, ping and close
+  defaults are 30, 10 and 5 seconds respectively. Cancelling a ping caller preserves its
+  outstanding probe and original deadline; timeout terminates the connection.
+- Shared WebSocket opening policy with request validation, shared authentication, one eligible
+  pre-upgrade 401 replay and a whole-connect deadline. Cancelled and expired callers leave
+  promptly; late successful connections are discarded.
 - `WebSocketCore` value types for text/binary messages, raw close codes, close metadata,
   outbound requests, extensible errors, and configurable send limits and policies.
 - `WebSocketURLSession`, `WebSocketPortable`, and `WebSocketHummingbird` product scaffolding.
-  Portable client and server dependencies have independent default-off traits. Live connections,
-  network adapters, receive behavior and deadline defaults are not implemented yet.
+  Portable client and server dependencies have independent default-off traits. Network adapters,
+  application sends and caller-initiated graceful close remain unimplemented.
 - `MockWebSocketTransport`, `ScriptedWebSocketConnection`, `WebSocketRendezvous`, and explicit
   script-exhaustion errors in `HTTPTesting`, which now depends on `WebSocketCore`.
 - A WebSocketCore reference catalog and isolated consumer dependency-graph verification.

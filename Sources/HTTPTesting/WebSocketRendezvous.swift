@@ -29,8 +29,8 @@ public final class WebSocketRendezvous: Sendable {
   /// The number of suspended operation and arrival waiters.
   public var pendingWaiters: Int { state.withLock { $0.waiters.count } }
 
-  /// Records an arrival and suspends until release or cancellation.
-  public func arriveAndWait() async throws(WebSocketError) {
+  /// Records an arrival and releases arrival observers without suspending.
+  public func arrive() {
     let ready = state.withLock { state in
       state.arrivals += 1
       let ready = state.waiters.filter { _, waiter in
@@ -40,6 +40,11 @@ public final class WebSocketRendezvous: Sendable {
       return Array(ready.values)
     }
     for waiter in ready { waiter.continuation.resume(returning: .success(())) }
+  }
+
+  /// Records an arrival and suspends until release or cancellation.
+  public func arriveAndWait() async throws(WebSocketError) {
+    arrive()
     try await wait(threshold: nil)
   }
 

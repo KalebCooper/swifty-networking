@@ -12,6 +12,60 @@ import WebSocketTestSupport
 
 @Suite("WebSocket scripts", .timeLimit(.minutes(suiteTimeLimitMinutes)))
 struct WebSocketScriptTests {
+  @Test(
+    "Backend protocol calls reject an incompatible scripted outcome",
+    arguments: [
+      ScriptedWebSocketConnection.Operation.close(code: .normalClosure, reason: nil),
+      .ping, .receive, .send(.text("message")),
+    ])
+  func backendCallsRejectMismatchedOutcomes(_ operation: ScriptedWebSocketConnection.Operation)
+    async
+  {
+    let outcome: ScriptedWebSocketConnection.Outcome =
+      operation == .receive ? .completed : .message(nil)
+    let connection = ScriptedWebSocketConnection(steps: [.init(result: .success(outcome))])
+    do throws(WebSocketError) {
+      switch operation {
+      case .cancel: Issue.record("Cancellation has no asynchronous result")
+      case .close(let code, let reason): _ = try await connection.close(code: code, reason: reason)
+      case .ping: try await connection.ping()
+      case .receive: _ = try await connection.receive()
+      case .send(let message): try await connection.send(message)
+      }
+      Issue.record("An incompatible outcome was accepted")
+    } catch {
+      #expect(error.kind == .transport)
+      #expect(error.underlying as? WebSocketScriptFailure == .mismatchedOutcome)
+    }
+    #expect(connection.operations == [operation])
+  }
+
+  @Test("Backend protocol calls consume their seeded outcomes and synchronous abort consumes none")
+  func backendCallsReplaySeededOutcomes() async throws {
+    let close = WebSocketClose(code: .init(rawValue: 4001), reason: "done")
+    let connection = ScriptedWebSocketConnection(
+      closeInfo: close, negotiatedSubprotocol: "chat",
+      steps: [
+        .init(result: .success(.completed)),
+        .init(result: .success(.message(.text("received")))),
+        .init(result: .success(.completed)),
+        .init(result: .success(.close(close))),
+      ])
+    let backend: any WebSocketConnection = connection
+    backend.cancel()
+    try await connection.waitForCancellation()
+    try await backend.ping()
+    #expect(try await backend.receive() == .text("received"))
+    try await backend.send(.text("sent"))
+    #expect(try await backend.close(code: .normalClosure, reason: "bye") == close)
+    #expect(backend.closeInfo == close)
+    #expect(backend.negotiatedSubprotocol == "chat")
+    #expect(
+      connection.operations == [
+        .cancel, .ping, .receive, .send(.text("sent")), .close(code: .normalClosure, reason: "bye"),
+      ])
+  }
+
   @Test("An exhausted script records its call and throws a named fixture failure")
   func exhaustedScriptFailsExplicitly() async {
     let connection = ScriptedWebSocketConnection()

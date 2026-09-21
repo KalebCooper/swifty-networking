@@ -9,7 +9,7 @@ import WebSocketCore
 /// Each call consumes one step, including a call cancelled while waiting at its step's gate.
 /// An exhausted script throws a transport error carrying
 /// ``WebSocketScriptFailure/noScriptedOutcome``.
-public final class ScriptedWebSocketConnection: Sendable {
+public final class ScriptedWebSocketConnection: WebSocketConnection {
   /// One operation as supplied by the test or code under test.
   public enum Operation: Equatable, Sendable {
     /// A connection-abort request.
@@ -48,20 +48,73 @@ public final class ScriptedWebSocketConnection: Sendable {
     }
   }
 
+  /// Explicitly seeded peer close metadata, independent of scripted outcomes.
+  public let closeInfo: WebSocketClose?
+  /// Explicitly seeded negotiated subprotocol.
+  public let negotiatedSubprotocol: String?
+
+  private let cancellation = WebSocketRendezvous()
   private let script: WebSocketScript<Operation, Outcome>
 
   /// Creates a connection script with no implicit successful operations.
-  public init(steps: [Step] = []) {
+  public init(
+    closeInfo: WebSocketClose? = nil,
+    negotiatedSubprotocol: String? = nil,
+    steps: [Step] = []
+  ) {
+    self.closeInfo = closeInfo
+    self.negotiatedSubprotocol = negotiatedSubprotocol
     script = WebSocketScript(answers: steps.map { .init(gate: $0.gate, result: $0.result) })
   }
 
   /// All recorded operations, including calls made after the script was exhausted.
   public var operations: [Operation] { script.calls }
 
+  /// Records synchronous abort without consuming an asynchronous step.
+  public func cancel() {
+    script.record(.cancel)
+    cancellation.release()
+  }
+
+  /// Records close and returns the explicitly seeded close outcome.
+  public func close(code: WebSocket.CloseCode, reason: String?)
+    async throws(WebSocketError) -> WebSocketClose
+  {
+    guard case .close(let close) = try await perform(.close(code: code, reason: reason)) else {
+      throw mismatch()
+    }
+    return close
+  }
+
   /// Records an operation and returns the next seeded outcome.
   ///
   /// Operation names do not select outcomes. The test supplies the entire script.
   public func perform(_ operation: Operation) async throws(WebSocketError) -> Outcome {
     try await script.perform(operation)
+  }
+
+  /// Records ping and requires an explicitly seeded completion.
+  public func ping() async throws(WebSocketError) {
+    guard case .completed = try await perform(.ping) else { throw mismatch() }
+  }
+
+  /// Records receive and returns the explicitly seeded message or end.
+  public func receive() async throws(WebSocketError) -> WebSocket.Message? {
+    guard case .message(let message) = try await perform(.receive) else { throw mismatch() }
+    return message
+  }
+
+  /// Records send and requires an explicitly seeded completion.
+  public func send(_ message: WebSocket.Message) async throws(WebSocketError) {
+    guard case .completed = try await perform(.send(message)) else { throw mismatch() }
+  }
+
+  /// Waits until cancel has been recorded, or throws if this test waiter is cancelled.
+  public func waitForCancellation() async throws(WebSocketError) {
+    try await cancellation.arriveAndWait()
+  }
+
+  private func mismatch() -> WebSocketError {
+    WebSocketError(kind: .transport, underlying: WebSocketScriptFailure.mismatchedOutcome)
   }
 }

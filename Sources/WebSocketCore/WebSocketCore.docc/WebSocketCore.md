@@ -1,55 +1,87 @@
 # ``WebSocketCore``
 
-Represent WebSocket messages, handshake inputs, close metadata and send configuration.
+Own a WebSocket connection through an injected backend, with bounded receiving and explicit cleanup.
 
 ## Overview
 
-This module provides foundational values. Live connections, transport protocols and network adapters
-are not yet available. It does not change the HTTP client's transport or streaming contracts.
+``WebSocketClient`` opens a ``WebSocket`` using a ``WebSocketTransport``. The client accepts
+a request or URL, defaults to ContinuousClock, and supports an injected clock. Network adapters
+are not yet implemented or qualified. Application sending and caller-initiated graceful close
+are not yet exposed on the shared handle.
 
-The package's shared opening-handshake policy validates requests before credential or backend work.
-It preserves the original `Authentication` refresh identity, refuses redirects, and permits at most
-one replay after an actual pre-upgrade HTTP 401 when replay is enabled and a refresher exists.
-Unknown-status failures never trigger a refresh. One configurable deadline, 30 seconds by default,
-covers credentials, refresh waiting and both handshake attempts. Cancellation or expiry releases
-the caller without abandoning shared credential rotation; late successful connections are discarded.
-This policy is available to package integrations, not through a public live client yet. Network
-adapter behavior requires separate qualification.
+Opening validates options and requests before credential or backend work. Authentication retains
+the same refresh identity as HTTP. One configurable connectTimeout, thirty seconds by default,
+covers credentials, refresh waiting and both attempts. Only an actual pre-upgrade HTTP 401 can
+trigger one eligible replay. Backends must refuse redirects and preserve actual response metadata.
+Cancellation releases the caller without abandoning shared credential rotation, and late
+successful connections are aborted.
 
-``WebSocket/Message`` distinguishes text and binary data, including empty messages.
-``WebSocket/CloseCode`` preserves raw application codes, and ``WebSocketClose`` represents an empty
-peer close with a nil code. Neither constructing metadata nor receiving it proves a completed close
-handshake.
+### Ownership and Receiving
 
-``WebSocket/Options`` stores configurable send capacities and policies. Defaults are 16 outstanding
-messages and 1 MiB of payload, serialization, and preservation when a failed send has not started
-writing. The capacities count active and queued sends together. These values do not implement a
-queue or validate a connection. Receive limits and operation deadlines are not configured yet.
+The socket, its ``WebSocketMessages`` value and its iterators retain the connection.
+Releasing the last external owner aborts it, even with a receive or ping pending.
+Creating another messages value or iterator does not start another receive pump.
+The result-returning withConnection conveniences abort on normal exit, error and cancellation;
+their operation and result may remain isolated to the caller and need not be Sendable.
+An escaped handle is terminal after scope exit.
 
-```swift
-let message = WebSocket.Message.text("hello")
-let options = WebSocket.Options(
-  maxPendingSendBytes: 2_097_152,
-  maxPendingSendMessages: 32,
-  sendFailurePolicy: .abortConnection
-)
-```
+The first next() claims the reader. Copies share that claim and permit only one pending next().
+A competing reader or overlapping call throws concurrentOperation without disturbing the owner.
+Cancellation finishes the iterator and releases its pending read without cancelling the physical
+receive. A new iterator can consume unread messages. Releasing the last iterator copy releases
+its claim without closing a separately retained socket. Cancellation and delivery race for
+settlement: a delivery that wins returns its message, avoiding silent loss.
 
-``WebSocketRequest`` stores a URL, headers, subprotocol preferences and an optional `Authentication`
-value without invoking credentials. ``WebSocketError`` retains actual response and close metadata
-when supplied; absent response metadata remains nil. Its description omits peer reasons, underlying
-error descriptions and arbitrary custom kind strings. Raw diagnostic properties may contain secrets.
+Receive defaults are 1 MiB per message, 1 MiB of buffered payload and 16 buffered messages.
+Empty messages count toward the message capacity. Text counts UTF-8 bytes. Limits must be
+positive, and byte capacities must accommodate maxMessageBytes. Capacity checks avoid integer
+overflow. These bounds cover the completed-message inbox plus one message being received and
+bookkeeping overhead; backend buffers and copies remain outside this accounting.
 
-The `HTTPTesting` product provides `MockWebSocketTransport`, `ScriptedWebSocketConnection` and
-`WebSocketRendezvous`. Scripts return seeded outcomes and record calls without implementing retry,
-authentication, queue or lifecycle policy. Their cancellation-safe gates coordinate test operations,
-not live socket behavior.
+Overflow fails the connection with bufferOverflow; an oversized message reports messageTooLarge.
+Buffered payloads are released on failure. The core attempts a bounded close with code 1008
+or 1009 respectively, then aborts the backend. closeTimeout defaults to five seconds.
+A valid peer close drains already buffered messages before ending the sequence.
+``WebSocketClose`` preserves an absent code and raw application-defined codes.
+
+### Ping and Cancellation
+
+Only one ping probe may be outstanding. Cancellation before admission sends nothing.
+After admission, cancellation releases the caller while the physical probe and its original
+deadline continue. A matching pong frees the slot. The configurable pingTimeout defaults to
+ten seconds; expiry terminates the connection with timedOut, including after caller cancellation.
+Overlapping pings throw concurrentOperation. There is no automatic heartbeat or reconnect.
+
+### Backend and Test Contracts
+
+``WebSocketConnection`` supplies complete-message receive, pong completion, close and synchronous
+idempotent abort. Its operations must cooperate with abort and release resources promptly.
+A normal receive end requires peer close metadata to be available already; an absent close is a
+protocol failure. Backends must support receive and controls concurrently. Conformance requires
+live qualification beyond the scripted shared-core tests.
+
+HTTPTesting supplies MockWebSocketTransport, ScriptedWebSocketConnection and WebSocketRendezvous.
+Scripts record calls and return seeded outcomes; they do not implement lifecycle policy.
+Synchronous cancel records an abort without consuming an asynchronous step. The remaining
+operations consume the same explicit FIFO; tests use gates to establish ordering.
+
+``WebSocket/Options`` also retains send capacities and policies for the forthcoming send surface.
+Those configuration values do not currently implement an application send queue.
+``WebSocketError`` descriptions omit arbitrary diagnostic strings, while raw response, close and
+underlying-error properties may contain sensitive information.
 
 ## Topics
 
+### Connections and Ownership
+
+- ``WebSocketClient``
+- ``WebSocket``
+- ``WebSocketMessages``
+- ``WebSocketConnection``
+- ``WebSocketTransport``
+
 ### Messages and Configuration
 
-- ``WebSocket``
 - ``WebSocket/Message``
 - ``WebSocket/Options``
 - ``WebSocket/SendFailurePolicy``
