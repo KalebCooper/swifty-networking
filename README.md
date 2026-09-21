@@ -11,8 +11,9 @@ back a decoded value, a raw response, or a stream of bytes, with a single typed 
 test support included.
 
 The unreleased WebSocket foundation provides message, request, close-metadata and error values,
-send configuration, and scripted test support. Live WebSocket connections and adapters are not yet
-implemented.
+send configuration, and scripted test support. Package integrations also share validated opening
+requests, authentication refresh and a whole-connect deadline. Live WebSocket clients, connections
+and adapters are not yet implemented.
 
 ## In under a minute
 

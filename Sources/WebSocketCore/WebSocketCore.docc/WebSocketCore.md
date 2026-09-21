@@ -7,6 +7,15 @@ Represent WebSocket messages, handshake inputs, close metadata and send configur
 This module provides foundational values. Live connections, transport protocols and network adapters
 are not yet available. It does not change the HTTP client's transport or streaming contracts.
 
+The package's shared opening-handshake policy validates requests before credential or backend work.
+It preserves the original `Authentication` refresh identity, refuses redirects, and permits at most
+one replay after an actual pre-upgrade HTTP 401 when replay is enabled and a refresher exists.
+Unknown-status failures never trigger a refresh. One configurable deadline, 30 seconds by default,
+covers credentials, refresh waiting and both handshake attempts. Cancellation or expiry releases
+the caller without abandoning shared credential rotation; late successful connections are discarded.
+This policy is available to package integrations, not through a public live client yet. Network
+adapter behavior requires separate qualification.
+
 ``WebSocket/Message`` distinguishes text and binary data, including empty messages.
 ``WebSocket/CloseCode`` preserves raw application codes, and ``WebSocketClose`` represents an empty
 peer close with a nil code. Neither constructing metadata nor receiving it proves a completed close

@@ -13,6 +13,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Package-level WebSocket opening policy with request validation, shared authentication, one
+  eligible pre-upgrade 401 replay, and a configurable 30-second whole-connect deadline. Cancelled
+  and expired callers leave promptly; late successful connections are discarded. Public live
+  clients and network adapters remain unimplemented.
 - `WebSocketCore` value types for text/binary messages, raw close codes, close metadata,
   outbound requests, extensible errors, and configurable send limits and policies.
 - `WebSocketURLSession`, `WebSocketPortable`, and `WebSocketHummingbird` product scaffolding.
