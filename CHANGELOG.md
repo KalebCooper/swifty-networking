@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Fixed
+
+- Cancelling an authentication refresh wait now releases that request promptly without replaying.
+  Shared credential rotation continues even when every waiter has cancelled.
+
 ### Added
 
 - `WebSocketCore` value types for text/binary messages, raw close codes, close metadata,

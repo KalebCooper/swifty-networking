@@ -39,6 +39,9 @@ import HTTPTypes
 /// made again, even over the same provider, is another credential with a gate of its own. See
 /// <doc:Authenticating>.
 ///
+/// Cancelling a request releases its refresh wait promptly. The shared refresh continues even
+/// after all waiting requests are cancelled, so credential rotation can finish.
+///
 /// ```swift
 /// var admin = client
 /// admin.authentication = Authentication(provider: adminStore, refresher: adminRefresher)
@@ -93,7 +96,7 @@ public struct Authentication: Sendable {
     case field(HTTPField.Name)
 
     /// The header field this scheme writes the credential into.
-    var fieldName: HTTPField.Name {
+    package var fieldName: HTTPField.Name {
       switch self {
       case .basic, .bearer: .authorization
       case .field(let name): name
@@ -104,7 +107,7 @@ public struct Authentication: Sendable {
     ///
     /// - Parameter token: The credential as the provider holds it, with no scheme prefix.
     /// - Returns: The header field value to send.
-    func value(for token: String) -> String {
+    package func value(for token: String) -> String {
       switch self {
       case .basic: "Basic \(token)"
       case .bearer: "Bearer \(token)"
@@ -206,4 +209,20 @@ public struct Authentication: Sendable {
   /// What tells one credential from another: the gate's identity, which every copy of the value
   /// shares and no other value has.
   var identity: ObjectIdentifier { ObjectIdentifier(gate) }
+
+  /// Waits for this credential's shared refresh without transferring cancellation to it.
+  package func refresh(replacing observed: String?) async throws(TransportError) {
+    guard !Task.isCancelled else { throw .cancelled }
+    guard let refresher else { return }
+    try await gate.refresh(replacing: observed, of: provider, with: refresher)
+  }
+
+  /// Refreshes an expiring credential using the same gate as a rejected credential.
+  package func refreshIfExpiring() async throws(TransportError) {
+    guard !Task.isCancelled else { throw .cancelled }
+    guard let threshold = refreshThreshold, refresher != nil,
+      let remaining = provider.timeUntilExpiry, remaining <= threshold
+    else { return }
+    try await refresh(replacing: provider.currentToken())
+  }
 }

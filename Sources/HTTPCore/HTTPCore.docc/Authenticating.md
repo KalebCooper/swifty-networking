@@ -201,10 +201,11 @@ await withTaskGroup { group in
 }
 ```
 
-A refresh runs to completion even when the request that started it is cancelled, since an abandoned
-refresh under refresh-token rotation would strand every other request. A failed refresh throws the
-refresher's error, the original `401` discarded, and by the refresher's contract the provider still
-holds what it held.
+A cancelled request stops waiting promptly and throws ``TransportError/cancelled`` without replaying.
+The shared refresh runs to completion even when every waiting request is cancelled, since abandoning
+refresh-token rotation could strand every other request. A later request can join that same refresh.
+A failed refresh throws the refresher's error to remaining waiters, discards the original `401`, and
+leaves the provider unchanged under the refresher's contract.
 
 ## Copies and Identity
 

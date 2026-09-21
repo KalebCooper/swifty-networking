@@ -33,9 +33,8 @@ import Synchronization
 ///
 /// Each waiter is a continuation in a registry, and whichever side removes its entry, the finishing
 /// flight or the waiter's own cancellation handler, is the side that resumes it. ``RefreshGate``
-/// uses a task in a slot instead, because a refresh is short and must never be abandoned, so its
-/// waiters may sit on `Task.value`, which no cancellation reaches. A coalesced send can be long,
-/// and a waiter must be able to leave it.
+/// uses the same independent-waiter rule so a cancelled request can leave a shared refresh
+/// without abandoning credential rotation.
 final class RequestCoalescer: Sendable {
   /// What a flight delivers to every waiter: the exchange's response and the URL it came from, or
   /// the error it threw.

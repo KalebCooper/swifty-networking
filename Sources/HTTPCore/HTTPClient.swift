@@ -905,21 +905,20 @@ public struct HTTPClient: Sendable {
       ).delivery
     }
 
-    if resolved.hop.sameOrigin { try await refreshIfExpiring(authentication) }
+    if resolved.hop.sameOrigin { try await authentication.refreshIfExpiring() }
     let sent = authentication.provider.currentToken()
     let followed = try await follow(
       resolved, credential: credential(sent, under: authentication), number: number,
       redirects: redirects, through: call)
     guard followed.reachedOrigin, followed.delivery.answer.status == .unauthorized,
-      authentication.replayOn401, let refresher = authentication.refresher
+      authentication.replayOn401, authentication.refresher != nil
     else { return followed.delivery }
 
     // The refused answer is dropped unread. A streamed one cancels whatever was still fetching it,
     // which is what a streaming transport guarantees for a body nobody reads. The replay is the
     // request as written, sent with the new credential and followed again: a redirect is the
     // server's answer to that request, not a target the client may keep.
-    try await authentication.gate.refresh(
-      replacing: sent, of: authentication.provider, with: refresher)
+    try await authentication.refresh(replacing: sent)
     let replayed = authentication.provider.currentToken()
     return try await follow(
       resolved, credential: credential(replayed, under: authentication), number: number,
@@ -1045,18 +1044,6 @@ public struct HTTPClient: Sendable {
       sameOrigin: credentialOrigin != nil && nextOrigin == credentialOrigin,
       target: target,
       url: url)
-  }
-
-  /// Refreshes before sending when the rules have a threshold and the provider's remaining lifetime
-  /// is at or below it. A provider that does not know its expiry, and a credential without a
-  /// refresher, never refresh here.
-  private func refreshIfExpiring(_ authentication: Authentication) async throws(TransportError) {
-    guard let threshold = authentication.refreshThreshold, let refresher = authentication.refresher,
-      let remaining = authentication.provider.timeUntilExpiry, remaining <= threshold
-    else { return }
-    try await authentication.gate.refresh(
-      replacing: authentication.provider.currentToken(), of: authentication.provider,
-      with: refresher)
   }
 
   /// The target without any field that carries a credential, for a send that leaves the base's

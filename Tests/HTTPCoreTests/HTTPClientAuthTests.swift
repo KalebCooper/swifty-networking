@@ -513,15 +513,13 @@ struct HTTPClientSingleFlightTests {
     second.cancel()
     latch.arrive()
 
-    // The cancelled caller leaves with `cancelled`: it reads its response body through a
-    // `StreamedBody`, which refuses a cancelled task, as a live transport does. What the shared
-    // refresh does in its absence is the claim under test.
+    // Cancellation leaves the shared refresh and prevents the cancelled request's replay.
     #expect(try await first.value == .ok)
     #expect(await failure { try await second.value }?.description == "cancelled")
     #expect(tokens.refreshes == 1)
     #expect(refresher.sawCancellation == false)
     #expect(tokens.currentToken() == "t2")
-    #expect(authorizations(of: transport) == ["Bearer t1", "Bearer t1", "Bearer t2", "Bearer t2"])
+    #expect(authorizations(of: transport) == ["Bearer t1", "Bearer t1", "Bearer t2"])
   }
 }
 

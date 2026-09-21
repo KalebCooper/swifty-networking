@@ -217,7 +217,8 @@ A `TokenProvider` supplies the current token and a `TokenRefresher` replaces it.
 pairs the two with the rules around them: the client attaches the token on every send and, on a
 `401` ending a chain that reached the base URL's origin, refreshes once and replays the request
 once, and a `refreshThreshold` makes it refresh before a send when the provider reports a lifetime
-at or below it.
+at or below it. Cancelling a request releases its refresh wait promptly and prevents its replay;
+the shared refresh continues even if every waiting request has cancelled.
 
 ```swift
 import Synchronization

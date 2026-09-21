@@ -14,7 +14,7 @@ import Synchronization
 /// A caller arrives with the token it observed: the one the server rejected, or the one it found
 /// about to expire. One critical section decides its fate.
 ///
-/// - A refresh is in flight: the caller joins it and awaits that task's result.
+/// - A refresh is in flight: the caller registers for its result.
 /// - No refresh is in flight and the provider already holds a different token: the caller skips.
 ///   Someone else finished a refresh between this caller's observation and now, and the new
 ///   credential is what it will send next.
@@ -30,55 +30,87 @@ import Synchronization
 ///
 /// ## Cancellation
 ///
-/// The refresh runs as an unstructured task that no waiter's cancellation reaches. A cancelled
-/// joiner stops waiting, and `Task.value` is not cancellation-sensitive; a leader whose own request
-/// is cancelled leaves the refresh running to completion. Under refresh-token rotation, a refresh
-/// abandoned halfway loses the credential for every request, not only the cancelled one, so the
-/// refresh finishes for everyone and cancellation is honoured by whoever drives the request
-/// afterwards. Do not restructure this into a child task.
+/// Each caller registers its own continuation. Cancellation removes and resumes only that caller;
+/// the unstructured refresh still finishes even when every waiter has left. Abandoning a rotating
+/// refresh token could lose the credential for all clients. Completion clears the flight only after
+/// the provider has been updated, and resumes the remaining waiters outside the lock.
 ///
-/// A failed refresh throws the refresher's own error to every waiter and, by the refresher's
-/// contract, leaves the provider untouched.
+/// A failed refresh delivers the refresher's error to every remaining waiter and leaves the
+/// provider untouched under the refresher's contract.
 final class RefreshGate: Sendable {
-  /// The refresh in flight, or `nil` when none is; set and cleared under the lock only.
-  ///
-  /// The outcome travels as a `Result` in a never-failing task, because `Task` is only creatable
-  /// with an untyped failure. The `Result` keeps the refresher's error typed all the way to every
-  /// waiter.
-  private let inFlight = Mutex<Task<Result<Void, TransportError>, Never>?>(nil)
+  private typealias Outcome = Result<Void, TransportError>
+  private typealias Waiter = CheckedContinuation<Outcome, Never>
+
+  private enum Arrival {
+    case cancelled
+    case joins
+    case leads
+    case skips
+  }
+
+  /// An empty table is still a live refresh; only completion resets it to nil.
+  private let inFlight = Mutex<[UInt64: Waiter]?>(nil)
+  private let tickets = Atomic<UInt64>(0)
 
   init() {}
 
-  /// Refreshes through `refresher` unless the provider no longer holds `observed`, sharing a
-  /// refresh already in flight with everyone waiting on it.
-  ///
-  /// - Parameters:
-  ///   - observed: The token the caller sent or found expiring; `nil` when it sent none.
-  ///   - provider: The provider the refresher installs into and the caller will re-read.
-  ///   - refresher: What obtains the new credential.
-  /// - Throws: The refresher's ``TransportError``, whether this caller led the refresh or joined
-  ///   it.
+  /// Shares a refresh unless the provider has already replaced the observed credential.
   func refresh(
     replacing observed: String?,
     of provider: any TokenProvider,
     with refresher: any TokenRefresher
   ) async throws(TransportError) {
-    let shared: Task<Result<Void, TransportError>, Never>? = inFlight.withLock { slot in
-      if let slot { return slot }
-      guard provider.currentToken() == observed else { return nil }
-      let task = Task<Result<Void, TransportError>, Never> {
-        defer { self.inFlight.withLock { $0 = nil } }
-        do throws(TransportError) {
-          try await refresher.refresh()
-          return .success(())
-        } catch {
-          return .failure(error)
+    let ticket = tickets.wrappingAdd(1, ordering: .relaxed).newValue
+    let outcome: Outcome = await withTaskCancellationHandler {
+      await withCheckedContinuation { (continuation: Waiter) in
+        // Registration and the cancellation check share the handler's lock, so cancellation
+        // cannot slip between checking the task and publishing its continuation.
+        let arrival: Arrival = inFlight.withLock { slot in
+          guard !Task.isCancelled else { return .cancelled }
+          if slot != nil {
+            slot?[ticket] = continuation
+            return .joins
+          }
+          guard provider.currentToken() == observed else { return .skips }
+          slot = [ticket: continuation]
+          return .leads
+        }
+        switch arrival {
+        case .cancelled:
+          continuation.resume(returning: .failure(.cancelled))
+        case .joins:
+          break
+        case .leads:
+          // This task has no parent cancellation relationship and owns completion even if
+          // cancellation removes the last waiter before the refresher starts.
+          Task {
+            let outcome: Outcome
+            do throws(TransportError) {
+              try await refresher.refresh()
+              outcome = .success(())
+            } catch {
+              outcome = .failure(error)
+            }
+            self.finish(with: outcome)
+          }
+        case .skips:
+          continuation.resume(returning: .success(()))
         }
       }
-      slot = task
-      return task
+    } onCancel: {
+      let waiter = inFlight.withLock { $0?.removeValue(forKey: ticket) }
+      waiter?.resume(returning: .failure(.cancelled))
     }
-    guard let shared else { return }
-    try await shared.value.get()
+    guard !Task.isCancelled else { throw .cancelled }
+    try outcome.get()
+  }
+
+  private func finish(with outcome: Outcome) {
+    let waiters = inFlight.withLock { slot in
+      let waiters = slot ?? [:]
+      slot = nil
+      return waiters
+    }
+    for waiter in waiters.values { waiter.resume(returning: outcome) }
   }
 }
