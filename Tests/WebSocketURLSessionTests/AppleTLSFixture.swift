@@ -3,7 +3,8 @@ import Foundation
 import Security
 import WebSocketCore
 
-/// A local test CA and its localhost server identity; no trust settings are installed.
+/// A local test CA and its localhost server identity; no trust settings are installed and nothing
+/// is written to a keychain.
 enum AppleTLSFixture {
   static func certificate() throws -> SecCertificate {
     let url = try resource("TestCA", extension: "der")
@@ -14,7 +15,12 @@ enum AppleTLSFixture {
 
   static func identity() throws -> SecIdentity {
     let url = try resource("ServerIdentity", extension: "p12")
-    let options = [kSecImportExportPassphrase as String: "fixture"] as CFDictionary
+    // On macOS an import otherwise lands in the login keychain with an access list naming the
+    // importing binary, and a later test process signing with that key waits on an access prompt
+    // that a headless host never answers.
+    let options =
+      [kSecImportExportPassphrase as String: "fixture", kSecImportToMemoryOnly as String: true]
+      as CFDictionary
     var items: CFArray?
     guard SecPKCS12Import(try Data(contentsOf: url) as CFData, options, &items) == errSecSuccess,
       let entries = items as? [[String: Any]],
