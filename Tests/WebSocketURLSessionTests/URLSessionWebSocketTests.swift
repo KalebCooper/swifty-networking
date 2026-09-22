@@ -99,8 +99,14 @@ struct URLSessionWebSocketTests {
     let sent = WebSocketCompletion<WebSocketServer.Frame>()
     let server = try WebSocketServer { peer, request in
       try await peer.upgrade(request)
-      let frame = try await peer.frame()
-      sent.finish(.success(frame))
+      // The read settles the observed frame either way, so a close frame that never arrives
+      // fails this test at once instead of leaving it to the suite time limit.
+      do {
+        sent.finish(.success(try await peer.frame()))
+      } catch {
+        sent.finish(.failure(WebSocketError(kind: .transport, underlying: error)))
+        throw error
+      }
       if reply { try await peer.send([0x88, 6, 15, 162, 112, 101, 101, 114]) }
     }
     defer { server.stop() }

@@ -128,14 +128,23 @@ jobs:
             -scheme swifty-networking-Package \
             -destination 'platform=macOS' \
             -skipPackagePluginValidation \
+            -resultBundlePath MacTests.xcresult \
             | xcbeautify --renderer github-actions
+      # The formatted log names a failing parameterized case without its message; the result bundle
+      # keeps the recorded issue text and the source location.
+      - name: Show failed macOS tests
+        if: failure()
+        run: xcrun xcresulttool get test-results summary --path MacTests.xcresult --compact
       # The package scheme uses the default graph. These independent trait runs exercise the live
       # NIO client, the Hummingbird server, and their combined interoperability on the same paid host.
       - name: Test portable WebSocket client on macOS
+        if: ${{ !cancelled() }}
         run: swift test --traits WebSocketPortable --scratch-path .build-ws-client
       - name: Test Hummingbird server on macOS
+        if: ${{ !cancelled() }}
         run: swift test --traits WebSocketHummingbird --scratch-path .build-ws-server
       - name: Test combined WebSocket clients and server on macOS
+        if: ${{ !cancelled() }}
         run: swift test --traits WebSocketHummingbird,WebSocketPortable,HTTPPortable,Logging --scratch-path .build-ws-combined
 
   lint:
