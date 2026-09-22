@@ -88,16 +88,16 @@ import Foundation
 /// | `connectTimeout`, `deadlineExceeded`, `getConnectionFromPoolTimeout`, `httpProxyHandshakeTimeout`, `readTimeout`, `socksHandshakeTimeout`, `tlsHandshakeTimeout`, `writeTimeout` | ``/HTTPCore/TransportFailureKind/timedOut`` |
 /// | Any other error, `unsupportedScheme` included | ``/HTTPCore/TransportFailureKind/other`` |
 ///
-/// A `cancelled` error is ``/HTTPCore/TransportError/cancelled`` and not a kind at all, and so are
-/// a `requestStreamCancelled`, which is a streamed request body cut off by its own cancellation,
-/// and a `CancellationError`. The SwiftNIO errors that reach a request are placed too: an `IOError`
-/// or a `NIOConnectionError`, which is how a refused or unreachable host is reported, a
-/// `ChannelError` of `ioOnClosedChannel`, `alreadyClosed`, or `eof`, which is the connection going
-/// away under the request, and `HTTPParserError.invalidEOFState`, which is the connection closing
-/// part-way through a response, are ``/HTTPCore/TransportFailureKind/connectivity``; a
-/// `ChannelError.connectTimeout` is ``/HTTPCore/TransportFailureKind/timedOut``; and a
-/// `FileSystemError` from the body file is ``/HTTPCore/TransportFailureKind/badURL``. Any other
-/// error is ``/HTTPCore/TransportFailureKind/other`` carrying itself.
+/// A `cancelled` or `requestStreamCancelled` client error, and a `CancellationError`, become
+/// ``/HTTPCore/TransportError/cancelled``. A refused or unreachable host can surface as `IOError`
+/// or `NIOConnectionError`; Network.framework can instead surface
+/// `AsyncHTTPClient.HTTPClient.NWPOSIXError` for a refused socket. These errors map to
+/// ``/HTTPCore/TransportFailureKind/connectivity``. A `ChannelError` of `ioOnClosedChannel`,
+/// `alreadyClosed`, or `eof`, and an `HTTPParserError.invalidEOFState` from a truncated response,
+/// also map to connectivity. `ChannelError.connectTimeout` maps to
+/// ``/HTTPCore/TransportFailureKind/timedOut`` and a body-file `FileSystemError` maps to
+/// ``/HTTPCore/TransportFailureKind/badURL``. Any other error maps to
+/// ``/HTTPCore/TransportFailureKind/other`` carrying itself.
 ///
 /// A response whose header field names or status this package cannot represent is
 /// ``/HTTPCore/TransportFailureKind/other`` carrying an ``AsyncHTTPClientResponseFailure`` that
@@ -395,6 +395,13 @@ public struct AsyncHTTPClientTransport: Transport {
     if error is IOError || error is NIOConnectionError {
       return .transport(kind: .connectivity, underlying: error)
     }
+    #if canImport(Network)
+    if let posixError = error as? AsyncHTTPClient.HTTPClient.NWPOSIXError,
+      posixError.errorCode == .ECONNREFUSED
+    {
+      return .transport(kind: .connectivity, underlying: error)
+    }
+    #endif
     if let channelError = error as? ChannelError {
       // The connection going away under the request is connectivity; a channel that never
       // connected in time is a timeout; every other channel error says something about how the

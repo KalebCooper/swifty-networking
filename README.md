@@ -10,11 +10,12 @@ A Swift networking package built on Swift concurrency. Build one client, describ
 back a decoded value, a raw response, or a stream of bytes, with a single typed error to handle and
 test support included.
 
-The unreleased WebSocket core provides an injected client, explicit connection ownership, a bounded
-message inbox and send queue, synchronous submission, shared send completion and graceful close.
-Limits, admission and failure policies, and operation deadlines are configurable. The URLSession
-WebSocket adapter, the opt-in NIO client and the opt-in Hummingbird server adapter are implemented.
-The server adapter uses Hummingbird's upgrade builder and keeps connection policy in WebSocketCore.
+The unreleased WebSocket products provide an injected client, explicit connection ownership, bounded
+receiving and sending, synchronous submission, shared send completion and graceful close. Apple has a
+URLSession client with local CA, hostname and TLS cancellation coverage on macOS and iOS simulator;
+the opt-in NIO client is qualified on Linux, macOS and iOS simulator. The opt-in
+Hummingbird server adapter is qualified on macOS and Linux. Android WebSocket execution and app trust
+behavior remain unqualified, so Android WebSocket support is not advertised.
 
 ## In under a minute
 
@@ -633,6 +634,17 @@ TCP/TLS buffers and temporary frame copies remain outside the inbox accounting.
 
 The [WebSocketPortable guide](Sources/WebSocketPortable/WebSocketPortable.docc/WebSocketPortable.md)
 describes these limits and platform qualification.
+
+### Hummingbird WebSocket servers
+
+Enable the `WebSocketHummingbird` trait on macOS or Linux. Install
+`HummingbirdWebSocketAdapter.configuration` in Hummingbird's HTTP/1 upgrade builder, decide whether
+to accept each request before upgrading, and use the prepared scope to handle messages. The
+[server guide](Sources/WebSocketHummingbird/WebSocketHummingbird.docc/WebSocketHummingbird.md)
+shows the complete upgrade configuration and a sequential response loop. Hummingbird owns the
+listener, middleware, TLS and event loops. Returning, throwing or cancelling the handler terminates
+that accepted connection and settles outstanding operations. Keep application acknowledgements and
+resynchronization in your own protocol; a completed send alone does not prove remote execution.
 
 ### Scripted WebSocket support
 

@@ -1,8 +1,8 @@
 name: CI
 
 # Every build lane here is deliberate. The Linux container proves HTTPCore stays portable off Apple
-# platforms (the whole point of keeping URLSession out of it) and is cheap. The Android emulator proves
-# the same claim on Android, under the same two traits, and is cheap too.
+# platforms (the whole point of keeping URLSession out of it) and is cheap. The Android emulator runs
+# the opt-in portable HTTP and WebSocket client suites, and is cheap too.
 # The macOS lane compiles the package for iOS and runs the suite natively on macOS, and it costs money:
 # see the CI cost policy in CLAUDE.md before adding jobs or pushing per-commit.
 on:
@@ -15,12 +15,23 @@ jobs:
     name: swift test (Linux)
     runs-on: ubuntu-latest
     container: swift:6.3-noble
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { graph: default, traits: '' }
+          - { graph: HTTPPortable, traits: HTTPPortable }
+          - { graph: Logging, traits: Logging }
+          - { graph: WebSocketPortable, traits: WebSocketPortable }
+          - { graph: client-combined, traits: 'HTTPPortable,WebSocketPortable,Logging' }
+          - { graph: WebSocketHummingbird, traits: WebSocketHummingbird }
+          - { graph: server-client-combined, traits: 'WebSocketHummingbird,WebSocketPortable,HTTPPortable,Logging' }
     # Every job in this repository is bounded, so a hang fails the job instead of sitting for the
     # six-hour default. The ceiling is that job's slowest green run on `main` under its current
     # definition, rounded up to the next five minutes and then tripled. `Scripts/verify.sh` holds
     # the rule that every job has one.
-    # Slowest green run 4m38s, and that run missed the cache, so it is the cold-build number.
-    timeout-minutes: 15
+    # Each graph has its own cold-build ceiling. Recalibrate from the first green hosted matrix run.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       # The trait set is part of the key: a `.build` made with a different trait set is the same
@@ -30,22 +41,19 @@ jobs:
         uses: actions/cache@v6
         with:
           path: .build
-          key: spm-${{ runner.os }}-traits-HTTPPortable-Logging-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
+          key: spm-${{ runner.os }}-traits-${{ matrix.graph }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
           restore-keys: |
-            spm-${{ runner.os }}-traits-HTTPPortable-Logging-${{ hashFiles('Package.swift', 'Package.resolved') }}-
-            spm-${{ runner.os }}-traits-HTTPPortable-Logging-
-      # Both traits are enabled here and nowhere else: this lane is the one that builds the
-      # AsyncHTTPClient transport and runs its suite, and the one that builds `LoggingObserver` over
-      # swift-log and runs its suite.
+            spm-${{ runner.os }}-traits-${{ matrix.graph }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+            spm-${{ runner.os }}-traits-${{ matrix.graph }}-
       - name: Run tests
-        run: swift test --traits HTTPPortable,Logging
-      # The same suite again under the package's default trait set, which enables neither, so what a
-      # consumer who asks for no trait actually gets is compiled and run on every push: the
-      # `HTTPPortable` product empty, `LoggingObserver` absent, and neither the SwiftNIO stack nor
-      # swift-log fetched. It uses a scratch path of its own so the cached `.build` above stays the
-      # graph its key names, and it runs second so the cache restore serves the run that reuses it.
-      - name: Run tests with the default trait set
-        run: swift test --scratch-path .build-default
+        env:
+          PACKAGE_TRAITS: ${{ matrix.traits }}
+        run: |
+          if [ -z "$PACKAGE_TRAITS" ]; then
+            swift test
+          else
+            swift test --traits "$PACKAGE_TRAITS"
+          fi
 
   android:
     name: swift test (Android)
@@ -67,32 +75,31 @@ jobs:
         uses: actions/cache@v6
         with:
           path: .build
-          key: spm-Android-swift-6.3.3-traits-HTTPPortable-Logging-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
+          key: spm-Android-swift-6.3.3-traits-HTTPPortable-WebSocketPortable-Logging-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
           restore-keys: |
-            spm-Android-swift-6.3.3-traits-HTTPPortable-Logging-${{ hashFiles('Package.swift', 'Package.resolved') }}-
-            spm-Android-swift-6.3.3-traits-HTTPPortable-Logging-
+            spm-Android-swift-6.3.3-traits-HTTPPortable-WebSocketPortable-Logging-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+            spm-Android-swift-6.3.3-traits-HTTPPortable-WebSocketPortable-Logging-
       # One composite step does the whole lane: it installs the swift.org host toolchain and the Swift
       # SDK for Android, pinned by exact build to the same 6.3.3 the Linux container runs, prints
       # `swift --version` straight after the install, builds the package and its tests for the x86_64
       # emulator triple, pushes the test runner to an emulator, and runs the whole suite there,
       # unfiltered. Pinned by commit; the `actions/cache` and `android-emulator-runner` it calls inside
-      # are the composite's own and cannot be pinned from here. Both traits are on, matching the Linux
-      # lane's first run: this is the lane that proves the AsyncHTTPClient transport, the SwiftNIO
-      # stack beneath it, and the loopback server its suite answers from on Android, and builds
-      # `LoggingObserver` over swift-log. The URLSession transport compiles out under
+      # are the composite's own and cannot be pinned from here. HTTPPortable, WebSocketPortable and
+      # Logging are enabled: this lane is configured to exercise both portable clients and their
+      # loopback fixtures on Android. A green hosted run is still required before claiming WebSocket
+      # execution there. The URLSession transport compiles out under
       # `#if canImport(Darwin)`, and its test target builds to an empty binary that still has to link.
       - name: Build and test on an Android emulator
         uses: skiptools/swift-android-action@2044b79660f201ccef8cbce62877e4ec5409f9c8 # v2.9.5
         with:
           swift-version: '6.3.3'
-          swift-build-flags: --traits HTTPPortable,Logging
+          swift-build-flags: --traits HTTPPortable,WebSocketPortable,Logging
 
   apple:
     name: Build (iOS) & Test (macOS)
     runs-on: macos-26
-    # Not yet sized from a green run of this job, so it carries the rule's figure for a job that
-    # finishes inside five minutes. This lane keeps no build cache, so every run is a cold one.
-    timeout-minutes: 15
+    # Trait-enabled fixtures add cold builds; recalibrate from the first green hosted run.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - name: Show Xcode version
@@ -122,6 +129,14 @@ jobs:
             -destination 'platform=macOS' \
             -skipPackagePluginValidation \
             | xcbeautify --renderer github-actions
+      # The package scheme uses the default graph. These independent trait runs exercise the live
+      # NIO client, the Hummingbird server, and their combined interoperability on the same paid host.
+      - name: Test portable WebSocket client on macOS
+        run: swift test --traits WebSocketPortable --scratch-path .build-ws-client
+      - name: Test Hummingbird server on macOS
+        run: swift test --traits WebSocketHummingbird --scratch-path .build-ws-server
+      - name: Test combined WebSocket clients and server on macOS
+        run: swift test --traits WebSocketHummingbird,WebSocketPortable,HTTPPortable,Logging --scratch-path .build-ws-combined
 
   lint:
     name: swift-format lint

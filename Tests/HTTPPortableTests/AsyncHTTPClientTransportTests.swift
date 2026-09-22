@@ -255,29 +255,46 @@ private struct UnmappedError: Error {}
 
       let (kind, underlying) = try #require(transportFailure(error))
       #expect(kind == .connectivity)
+      #if canImport(Network)
+      if let posixError = underlying as? AsyncHTTPClient.HTTPClient.NWPOSIXError {
+        #expect(posixError.errorCode == .ECONNREFUSED)
+      } else {
+        #expect(underlying is IOError)
+      }
+      #else
       #expect(underlying is IOError)
+      #endif
     }
   }
 
   @Test("A refused connection reached by host name is connectivity carrying the connection error")
   func aRefusedConnectionByHostNameIsAConnectivityFailure() async throws {
-    // A host name goes through name resolution and a connection attempt per address, and the
-    // failure of every attempt is reported as one `NIOConnectionError`; an address literal skips
-    // both and reports the one attempt's `IOError`, which the test above sees.
+    // A host name goes through name resolution and a connection attempt per address. Depending
+    // on the platform, refusal reaches the transport as NIOConnectionError or NWPOSIXError;
+    // an address literal can instead report IOError.
     let server = try await LoopbackServer.start(Script())
     let port = try #require(server.authority.split(separator: ":").last)
     try await server.stop()
     let request = HTTPRequest(
       method: .get, scheme: "http", authority: "localhost:\(port)", path: "/v1/things")
 
+    // Let name resolution and every address candidate report refusal before the deadline.
     let configuration = AsyncHTTPClient.HTTPClient.Configuration(
-      timeout: .init(connect: .milliseconds(250)))
+      timeout: .init(connect: .seconds(5)))
     try await withTransport(configuration: configuration) { transport in
       let error = try #require(await failure(sending: request, through: transport))
 
       let (kind, underlying) = try #require(transportFailure(error))
       #expect(kind == .connectivity)
+      #if canImport(Network)
+      if let posixError = underlying as? AsyncHTTPClient.HTTPClient.NWPOSIXError {
+        #expect(posixError.errorCode == .ECONNREFUSED)
+      } else {
+        #expect(underlying is NIOConnectionError)
+      }
+      #else
       #expect(underlying is NIOConnectionError)
+      #endif
     }
   }
 

@@ -2,6 +2,7 @@
 import Foundation
 import HTTPTypes
 import HTTPTypesFoundation
+import Security
 import Synchronization
 import WebSocketCore
 
@@ -9,6 +10,11 @@ import WebSocketCore
 final class URLSessionWebSocketDelegate: NSObject, Foundation.URLSessionWebSocketDelegate {
   let invalidation = WebSocketCompletion<Void>()
   private let registry = Mutex<[ObjectIdentifier: URLSessionWebSocketExchange]>([:])
+  private let testTrustAnchor: SecCertificate?
+
+  init(testTrustAnchor: SecCertificate? = nil) {
+    self.testTrustAnchor = testTrustAnchor
+  }
 
   var activeConnectionCount: Int { registry.withLock { $0.count } }
 
@@ -40,7 +46,19 @@ final class URLSessionWebSocketDelegate: NSObject, Foundation.URLSessionWebSocke
       @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
   ) {
     if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
-      completionHandler(.performDefaultHandling, nil)
+      guard let testTrustAnchor else {
+        completionHandler(.performDefaultHandling, nil)
+        return
+      }
+      guard let trust = challenge.protectionSpace.serverTrust,
+        SecTrustSetAnchorCertificates(trust, [testTrustAnchor] as CFArray) == errSecSuccess,
+        SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess,
+        SecTrustEvaluateWithError(trust, nil)
+      else {
+        completionHandler(.cancelAuthenticationChallenge, nil)
+        return
+      }
+      completionHandler(.useCredential, URLCredential(trust: trust))
     } else {
       // Credentials are explicit request headers; Foundation must not replay a challenge itself.
       let exchange = registry.withLock { $0[ObjectIdentifier(task)] }
@@ -81,8 +99,8 @@ final class URLSessionWebSocketSession: Sendable {
   let delegate: URLSessionWebSocketDelegate
   let session: URLSession
 
-  init() {
-    delegate = URLSessionWebSocketDelegate()
+  init(testTrustAnchor: SecCertificate? = nil) {
+    delegate = URLSessionWebSocketDelegate(testTrustAnchor: testTrustAnchor)
     let configuration = URLSessionConfiguration.ephemeral
     configuration.httpCookieStorage = nil
     configuration.httpShouldSetCookies = false

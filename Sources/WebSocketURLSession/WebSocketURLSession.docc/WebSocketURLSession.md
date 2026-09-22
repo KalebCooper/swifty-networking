@@ -54,10 +54,11 @@ differently or sends no close frame. Successful completion does not prove peer a
 A close frame without a code is represented with a nil code.
 
 The adapter has real-wire loopback coverage on macOS 27 and iOS 26.5 simulator. These fixtures
-exercise HTTP upgrade and WebSocket frames; certificate-chain and hostname-validation scenarios
-have not been qualified by this suite. Other Apple platforms and
-physical-device lifecycle behavior require separate qualification. No background-survival or
-always-on watchOS capability is promised.
+exercise HTTP upgrade, WebSocket frames, a locally trusted test CA, rejection of an untrusted CA,
+hostname mismatch and cancellation during TLS. The public transport uses system trust; the test CA
+is supplied only to an internal fixture and is never installed as a system root. Other Apple
+platforms and physical-device lifecycle behavior require separate qualification. Connections are
+not promised to survive backgrounding or run continuously on watchOS.
 
 ## Topics
 

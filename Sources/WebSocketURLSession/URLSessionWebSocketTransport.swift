@@ -1,5 +1,6 @@
 #if canImport(Darwin)
 import Foundation
+import Security
 import WebSocketCore
 
 /// Opens WebSockets using an owned URLSession with system server-trust validation.
@@ -14,10 +15,15 @@ import WebSocketCore
 /// try await socket.send("subscribe")
 /// ```
 public struct URLSessionWebSocketTransport: WebSocketTransport {
-  let session = URLSessionWebSocketSession()
+  let session: URLSessionWebSocketSession
 
   /// Creates an independent session without automatic cookie or credential storage.
-  public init() {}
+  public init() { session = URLSessionWebSocketSession() }
+
+  /// Uses a test-owned CA without modifying machine or application trust settings.
+  internal init(testTrustAnchor: SecCertificate) {
+    session = URLSessionWebSocketSession(testTrustAnchor: testTrustAnchor)
+  }
 
   /// Starts a connection attempt and returns after protocol negotiation.
   ///

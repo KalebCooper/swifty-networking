@@ -2,6 +2,7 @@
 import CryptoKit
 import Foundation
 import Network
+import Security
 import Synchronization
 import WebSocketCore
 
@@ -125,13 +126,29 @@ final class WebSocketServer: Sendable {
 
   private let handler: @Sendable (Peer, String) async throws -> Void
   private let listener: NWListener
+  private let secure: Bool
+  let accepted = WebSocketCompletion<Void>()
   let ready = WebSocketCompletion<UInt16>()
   let requests = Mutex<[String]>([])
   private let state = Mutex(State())
 
-  init(handler: @escaping @Sendable (Peer, String) async throws -> Void) throws {
+  init(
+    identity: SecIdentity? = nil,
+    handler: @escaping @Sendable (Peer, String) async throws -> Void
+  ) throws {
     self.handler = handler
-    let parameters = NWParameters.tcp
+    secure = identity != nil
+    let parameters: NWParameters
+    if let identity {
+      guard let networkIdentity = sec_identity_create(identity) else {
+        throw WebSocketError(kind: .transport)
+      }
+      let tls = NWProtocolTLS.Options()
+      sec_protocol_options_set_local_identity(tls.securityProtocolOptions, networkIdentity)
+      parameters = NWParameters(tls: tls, tcp: .init())
+    } else {
+      parameters = .tcp
+    }
     parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
     listener = try NWListener(using: parameters)
     listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
@@ -158,6 +175,7 @@ final class WebSocketServer: Sendable {
       return true
     }
     guard accepted else { connection.cancel(); return }
+    self.accepted.finish(.success(()))
     connection.start(queue: DispatchQueue(label: "WebSocketPeer"))
     Task {
       defer {
@@ -181,9 +199,10 @@ final class WebSocketServer: Sendable {
     for peer in peers { peer.cancel() }
   }
 
-  func url(_ path: String = "/") async throws -> URL {
+  func url(_ path: String = "/", host: String = "127.0.0.1") async throws -> URL {
     let port = try await ready.wait()
-    guard let url = URL(string: "ws://127.0.0.1:\(port)\(path)") else {
+    let scheme = secure ? "wss" : "ws"
+    guard let url = URL(string: "\(scheme)://\(host):\(port)\(path)") else {
       throw WebSocketError(kind: .invalidRequest)
     }
     return url

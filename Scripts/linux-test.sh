@@ -23,13 +23,17 @@ readonly IMAGE="swift:6.3-noble"
 # Build products live in a named volume rather than in the repo, for two reasons: Linux object files
 # must not share a scratch directory with the host's macOS build, and a volume survives the container
 # so repeat runs are incremental instead of cold.
-readonly SCRATCH_VOLUME="swifty-networking-linux-build"
+readonly SCRATCH_PREFIX="swifty-networking-linux-build"
 
 readonly REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Unset means the CI lane's trait list; explicitly empty means the package's default trait set, so `-`
 # rather than `:-` is the substitution that tells the two apart.
 readonly TRAITS="${SWIFTY_NETWORKING_TRAITS-HTTPPortable,Logging}"
+# Keep build products from different trait graphs apart. SwiftPM can otherwise reuse modules from a
+# previous graph even though the feature conditions and dependency edges changed.
+readonly GRAPH_NAME="$(printf '%s' "${TRAITS:-default}" | tr ',[:upper:]' '-[:lower:]')"
+readonly SCRATCH_VOLUME="${SCRATCH_PREFIX}-${GRAPH_NAME}"
 
 traits_argument=()
 if [ -n "$TRAITS" ]; then

@@ -291,7 +291,13 @@ let package = Package(
         .product(
           name: "HummingbirdWebSocket", package: "hummingbird-websocket",
           condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
-        "WebSocketCore", "WebSocketHummingbird", "WebSocketPortable",
+        "WebSocketCore",
+        .target(
+          name: "WebSocketHummingbird",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        .target(
+          name: "WebSocketPortable",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketPortable"])),
       ],
       swiftSettings: swiftSettings
     ),
@@ -300,6 +306,7 @@ let package = Package(
       dependencies: [
         "HTTPCore", "HTTPTesting", "WebSocketCore", "WebSocketTestSupport", "WebSocketURLSession",
       ],
+      resources: [.copy("Fixtures")],
       swiftSettings: swiftSettings
     ),
   ],

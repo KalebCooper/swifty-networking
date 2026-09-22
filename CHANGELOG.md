@@ -8,11 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `HTTPPortable` now maps AsyncHTTPClient's Network.framework connection-refusal error to a
+  connectivity failure, preserving the original error for callers.
 - Cancelling an authentication refresh wait now releases that request promptly without replaying.
   Shared credential rotation continues even when every waiter has cancelled.
 
 ### Added
 
+- CI configuration for default, independent portable/logging traits, Hummingbird-only, and combined
+  WebSocket client/server runs. The Android emulator recipe includes WebSocketPortable; hosted
+  execution and Android app qualification remain pending.
 - A scoped Hummingbird server adapter behind the WebSocketHummingbird trait. Accepted connections
   use the shared bounded inbox and send queue, send policies and deadlines. Hummingbird keeps
   listener, upgrade, middleware and event-loop ownership.
@@ -23,7 +28,9 @@ All notable changes to this project are documented here. The format follows
 
 - Apple WebSocket connections through URLSessionWebSocketTransport, with owned sessions, redirect
   refusal, explicit credentials, bounded shared queues, recoverable read/ping waits and physical
-  cancellation. Close returns backend-reported metadata and does not promise peer acknowledgement.
+  cancellation. Local CA success, untrusted-root and hostname rejection, and TLS cancellation are
+  covered on macOS 27 and iOS 26.5 simulator. Close returns backend-reported metadata and does not
+  promise peer acknowledgement.
 
 - WebSocket async send and synchronous enqueue share one bounded FIFO with configurable message/byte
   capacities, admission/failure policies, per-call policy overrides and a 30-second send deadline
