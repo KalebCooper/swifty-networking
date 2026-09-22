@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- A scoped Hummingbird server adapter behind the WebSocketHummingbird trait. Accepted connections
+  use the shared bounded inbox and send queue, send policies and deadlines. Hummingbird keeps
+  listener, upgrade, middleware and event-loop ownership.
 - NIOWebSocketTransport in the opt-in WebSocketPortable product, with verified TLS, bounded RFC
   framing, shared receive/send policies and idempotent shutdown of owned channels and event loops.
   Linux, macOS 27 and iOS 26.5 simulator loopback coverage includes certificate and hostname
@@ -41,9 +44,8 @@ All notable changes to this project are documented here. The format follows
   promptly; late successful connections are discarded.
 - `WebSocketCore` value types for text/binary messages, raw close codes, close metadata,
   outbound requests, extensible errors, and configurable send limits and policies.
-- `WebSocketURLSession`, `WebSocketPortable`, and `WebSocketHummingbird` product scaffolding.
-  Portable client and server dependencies have independent default-off traits. The Hummingbird
-  adapter remains unimplemented.
+- `WebSocketURLSession`, `WebSocketPortable`, and `WebSocketHummingbird` products.
+  Portable client and server dependencies have independent default-off traits.
 - `MockWebSocketTransport`, `ScriptedWebSocketConnection`, `WebSocketRendezvous`, and explicit
   script-exhaustion errors in `HTTPTesting`, which now depends on `WebSocketCore`.
 - A WebSocketCore reference catalog and isolated consumer dependency-graph verification.

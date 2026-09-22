@@ -77,7 +77,7 @@ extension WebSocket {
       self.sendTimeout = sendTimeout
     }
 
-    func validate() throws(WebSocketError) {
+    package func validate() throws(WebSocketError) {
       guard closeTimeout > .zero, connectTimeout > .zero, pingTimeout > .zero, sendTimeout > .zero,
         maxBufferedBytes >= maxMessageBytes, maxBufferedMessages > 0, maxMessageBytes > 0,
         maxPendingSendBytes >= maxMessageBytes, maxPendingSendMessages > 0

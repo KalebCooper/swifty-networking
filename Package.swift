@@ -51,6 +51,7 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-log.git", from: "1.15.0"),
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.102.0"),
     .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.37.4"),
+    .package(url: "https://github.com/hummingbird-project/swift-websocket.git", from: "1.6.0"),
   ],
   targets: [
     .target(
@@ -122,7 +123,19 @@ let package = Package(
         .product(
           name: "HummingbirdWebSocket", package: "hummingbird-websocket",
           condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        .product(
+          name: "NIOCore", package: "swift-nio",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        .product(
+          name: "NIOHTTP1", package: "swift-nio",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        .product(
+          name: "NIOWebSocket", package: "swift-nio",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
         "WebSocketCore",
+        .product(
+          name: "WSCore", package: "swift-websocket",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
       ],
       swiftSettings: swiftSettings
     ),
@@ -223,6 +236,27 @@ let package = Package(
       swiftSettings: swiftSettings
     ),
     .testTarget(
+      name: "WebSocketHummingbirdTests",
+      dependencies: [
+        "HTTPTesting",
+        .product(
+          name: "Hummingbird", package: "hummingbird",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        .product(
+          name: "HummingbirdTesting", package: "hummingbird",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        .product(
+          name: "HummingbirdWSClient", package: "hummingbird-websocket",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        .product(
+          name: "HummingbirdWSTesting", package: "hummingbird-websocket",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        "WebSocketCore", "WebSocketHummingbird",
+        "WebSocketURLSession",
+      ],
+      swiftSettings: swiftSettings
+    ),
+    .testTarget(
       name: "WebSocketPortableTests",
       dependencies: [
         "HTTPTesting",
@@ -241,6 +275,23 @@ let package = Package(
           name: "NIOWebSocket", package: "swift-nio",
           condition: .when(traits: ["WebSocketPortable"])),
         "WebSocketCore", "WebSocketPortable", "WebSocketTestSupport",
+      ],
+      swiftSettings: swiftSettings
+    ),
+    .testTarget(
+      name: "WebSocketServerInteropTests",
+      dependencies: [
+        "HTTPTesting",
+        .product(
+          name: "Hummingbird", package: "hummingbird",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        .product(
+          name: "HummingbirdTesting", package: "hummingbird",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        .product(
+          name: "HummingbirdWebSocket", package: "hummingbird-websocket",
+          condition: .when(platforms: [.linux, .macOS], traits: ["WebSocketHummingbird"])),
+        "WebSocketCore", "WebSocketHummingbird", "WebSocketPortable",
       ],
       swiftSettings: swiftSettings
     ),

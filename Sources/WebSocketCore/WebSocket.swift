@@ -16,6 +16,16 @@ public final class WebSocket: Sendable {
     session.start()
   }
 
+  /// Creates the shared session for an already accepted server connection.
+  package static func accepted(
+    _ connection: any WebSocketConnection, options: Options
+  ) throws(WebSocketError) -> WebSocket {
+    try options.validate()
+    return WebSocket(
+      session: WebSocketSession(
+        backend: connection, clock: WebSocketClock(ContinuousClock()), options: options))
+  }
+
   /// Backend-reported closure metadata; it does not prove peer acknowledgement.
   public var closeInfo: WebSocketClose? { owner.session.closeInfo }
   /// A lazy reader view of the connection's existing receive pump.

@@ -13,7 +13,8 @@ test support included.
 The unreleased WebSocket core provides an injected client, explicit connection ownership, a bounded
 message inbox and send queue, synchronous submission, shared send completion and graceful close.
 Limits, admission and failure policies, and operation deadlines are configurable. The URLSession
-WebSocket adapter and the opt-in NIO client are implemented; the Hummingbird adapter is not yet implemented.
+WebSocket adapter, the opt-in NIO client and the opt-in Hummingbird server adapter are implemented.
+The server adapter uses Hummingbird's upgrade builder and keeps connection policy in WebSocketCore.
 
 ## In under a minute
 
@@ -483,7 +484,7 @@ import Testing
 - An independent, off-by-default `WebSocketPortable` trait adds NIO 2.102.0+ and
   NIOSSL 2.37.4+ without AsyncHTTPClient.
 - An independent, off-by-default `WebSocketHummingbird` trait adds Hummingbird 2.26.0+ and
-  HummingbirdWebSocket 2.7.0+ for macOS/Linux adapter scaffolding. It does not require
+  HummingbirdWebSocket 2.7.0+ for the macOS/Linux server adapter. It does not require
   `WebSocketPortable`. Default and client-only consumers do not resolve Hummingbird.
 - The URLSession adapter is tested on macOS 27 and iOS 26.5 simulator. The NIO client has loopback
   protocol and TLS coverage on Linux, macOS 27 and iOS 26.5 simulator, including the approved
@@ -503,7 +504,7 @@ retain their existing HTTPCore dependency.
 | `HTTPTesting` | HTTP fixtures, mocks and clocks, plus `MockWebSocketTransport`, `ScriptedWebSocketConnection`, and `WebSocketRendezvous`. |
 | `HTTPURLSession` | The `URLSession` transport, buffered and streaming. |
 | `WebSocketCore` | Injected client, bounded receive/send queues, synchronous submission, shared completion, graceful close and backend protocols. |
-| `WebSocketHummingbird` | Independently trait-gated server adapter scaffolding; no live adapter yet. |
+| `WebSocketHummingbird` | Scoped Hummingbird server adapter using the shared bounded WebSocket session, behind its own trait. |
 | `WebSocketPortable` | NIO/NIOSSL client with bounded framing and explicit transport shutdown, behind the `WebSocketPortable` trait. |
 | `WebSocketURLSession` | Apple WebSocket client using an owned URLSession. |
 
@@ -591,7 +592,7 @@ Its result and closeInfo are backend-reported metadata, which can reflect our lo
 code and reason. Success does not prove a peer close acknowledgement or application delivery.
 
 The shared limits bound our queues. Foundation's internal buffers, TCP/TLS buffers and temporary
-copies are outside that accounting. The Hummingbird adapter remains scaffolding.
+copies are outside that accounting. The Hummingbird server adapter uses the same shared limits.
 
 ### Portable WebSocket connections
 
@@ -674,6 +675,8 @@ rebuilt from `main` on every push to it. Nine articles accompany it:
 
 The [WebSocketCore reference](Sources/WebSocketCore/WebSocketCore.docc/WebSocketCore.md)
 describes the unreleased connection API, backend contract and current limits. The
+[WebSocketHummingbird guide](Sources/WebSocketHummingbird/WebSocketHummingbird.docc/WebSocketHummingbird.md)
+shows the accepted server connection scope and upgrade configuration. The
 [WebSocketURLSession guide](Sources/WebSocketURLSession/WebSocketURLSession.docc/WebSocketURLSession.md)
 describes the Apple adapter and its qualification limits.
 
