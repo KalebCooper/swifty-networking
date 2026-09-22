@@ -380,7 +380,7 @@ private func text(_ data: Data) -> String {
     }
 
     #expect(isCancelled(try #require(outcome)))
-    #expect(script.requests.count <= 1)
+    #expect(script.requests.isEmpty)
   }
 
   @Test func aRequestWithNoURLToSendToIsABadURL() async throws {

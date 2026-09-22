@@ -133,7 +133,8 @@ public struct URLSessionTransport: Transport {
   /// indistinguishable on the wire from no body at all.
   ///
   /// Cancelling the calling task cancels the underlying `URLSession` task, which surfaces here as
-  /// ``/HTTPCore/TransportError/cancelled``.
+  /// ``/HTTPCore/TransportError/cancelled``. A task already cancelled when it calls this sends
+  /// nothing and gets the same error.
   ///
   /// ```swift
   /// let request = HTTPRequest(
@@ -153,6 +154,11 @@ public struct URLSessionTransport: Transport {
     async throws(TransportError) -> Response
   {
     let urlRequest = try Self.urlRequest(for: request, options: options)
+    // A caller cancelled before anything was sent is answered here. The session's async calls can
+    // still complete a request whose task was cancelled before it started.
+    if Task.isCancelled {
+      throw .cancelled
+    }
     let delegate = RedirectRefusingDelegate()
 
     let data: Data

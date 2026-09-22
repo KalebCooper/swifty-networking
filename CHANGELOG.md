@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `URLSessionTransport.send` from an already-cancelled task now fails with `cancelled` without
+  sending, as `stream` does. It could previously return the response.
 - `HTTPPortable` now maps AsyncHTTPClient's Network.framework connection-refusal error to a
   connectivity failure, preserving the original error for callers.
 - Cancelling an authentication refresh wait now releases that request promptly without replaying.
