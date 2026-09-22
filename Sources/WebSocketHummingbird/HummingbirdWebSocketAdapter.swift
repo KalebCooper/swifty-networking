@@ -86,12 +86,15 @@ public final class HummingbirdWebSocketScope: Sendable {
         try await operation(socket)
       } onCancel: {
         socket.cancel()
+        reader.cancel()
       }
       socket.cancel()
+      reader.cancel()
       await reader.value
       return value
     } catch {
       socket.cancel()
+      reader.cancel()
       await reader.value
       throw error
     }
