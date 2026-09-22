@@ -146,23 +146,29 @@ struct URLSessionWebSocketLifecycleTests {
     "Receive limits fail oversized messages and stalled inboxes without silent loss",
     arguments: [false, true])
   func receiveLimits(oversized: Bool) async throws {
-    let close = WebSocketCompletion<WebSocketServer.Frame>()
+    let ended = WebSocketCompletion<Void>()
     let server = try WebSocketServer { peer, request in
       try await peer.upgrade(
         request, frames: oversized ? [0x81, 3, 97, 98, 99] : [0x81, 1, 97, 0x81, 1, 98])
-      let frame = try await peer.frame()
-      close.finish(.success(frame))
-      if frame.opcode == 8 {
-        try await peer.send([0x88, UInt8(frame.payload.count)] + frame.payload)
+      do {
+        let frame = try await peer.frame()
+        if frame.opcode == 8 {
+          try await peer.send([0x88, UInt8(frame.payload.count)] + frame.payload)
+        }
+      } catch {
+        // URLSession may end the TCP task without sending a WebSocket close frame.
       }
+      ended.finish(.success(()))
     }
     defer { server.stop() }
     let socket = try await WebSocketClient(transport: URLSessionWebSocketTransport())
       .connect(
         to: server.url(),
-        options: .init(maxBufferedBytes: 2, maxBufferedMessages: 1, maxMessageBytes: 2))
+        options: .init(
+          closeTimeout: .milliseconds(100), maxBufferedBytes: 2, maxBufferedMessages: 1,
+          maxMessageBytes: 2))
     defer { socket.cancel() }
-    _ = try await close.wait()
+    try await ended.wait()
     var reader = socket.messages.makeAsyncIterator()
     await #expect { try await reader.next() } throws: {
       ($0 as? WebSocketError)?.kind == (oversized ? .messageTooLarge : .bufferOverflow)
