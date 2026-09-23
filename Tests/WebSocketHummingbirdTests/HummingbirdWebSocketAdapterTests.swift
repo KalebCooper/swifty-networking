@@ -21,6 +21,11 @@ private enum FixtureFailure: Error {
   case expected
 }
 
+// A handler that ends its connection first closes the TCP connection without a close frame. The
+// Hummingbird test client allows remote half-closure, and an end of input that reaches it while it is
+// still installing its upgraded pipeline is dropped, so its inbound stream never finishes. A test
+// that ends the connection from the server therefore waits for the client's first frame: the client
+// can send only after its upgrade completes.
 @Suite("Hummingbird WebSocket adapter", .serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
 struct HummingbirdWebSocketAdapterTests {
   @Test("A URLSession client exchanges messages with the accepted shared session")
@@ -119,6 +124,8 @@ struct HummingbirdWebSocketAdapterTests {
         return .upgrade([:]) { inbound, outbound, _ in
           try await scope.withConnection(inbound: inbound, outbound: outbound) { socket in
             if fails {
+              var messages = socket.messages.makeAsyncIterator()
+              _ = try await messages.next()
               reached.arrive()
               throw FixtureFailure.expected
             }
@@ -130,7 +137,8 @@ struct HummingbirdWebSocketAdapterTests {
       },
       configuration: .init(address: .hostname("localhost", port: 0)))
     try await app.test(.live) { client in
-      _ = try? await client.ws("/fail") { inbound, _, _ in
+      _ = try? await client.ws("/fail") { inbound, outbound, _ in
+        try await outbound.write(.text("open"))
         for try await _ in inbound {}
       }
       #expect(reached.arrivals == 1)
@@ -280,6 +288,8 @@ struct HummingbirdWebSocketAdapterTests {
         let scope = try await adapter.prepare(channel: channel)
         return .upgrade([:]) { inbound, outbound, _ in
           try await scope.withConnection(inbound: inbound, outbound: outbound) { socket in
+            var messages = socket.messages.makeAsyncIterator()
+            _ = try await messages.next()
             let first = try socket.enqueue("one")
             let second = try socket.enqueue("two")
             try await first.wait()
@@ -299,7 +309,8 @@ struct HummingbirdWebSocketAdapterTests {
       },
       configuration: .init(address: .hostname("localhost", port: 0)))
     try await app.test(.live) { client in
-      _ = try? await client.ws("/") { inbound, _, _ in
+      _ = try? await client.ws("/") { inbound, outbound, _ in
+        try await outbound.write(.text("open"))
         var messages = inbound.messages(maxSize: 16).makeAsyncIterator()
         let first = try await messages.next()
         let second = try await messages.next()
@@ -326,15 +337,18 @@ struct HummingbirdWebSocketAdapterTests {
         let scope = try await adapter.prepare(channel: channel)
         return .upgrade([:]) { inbound, outbound, _ in
           try await scope.withConnection(inbound: inbound, outbound: outbound) { socket in
+            var messages = socket.messages.makeAsyncIterator()
+            _ = try await messages.next()
             accepted.finish(.success(socket))
-            for try await _ in socket.messages {}
+            while try await messages.next() != nil {}
           }
         }
       },
       configuration: .init(address: .hostname("localhost", port: 0)))
     try await app.test(.live) { client in
       Task {
-        _ = try? await client.ws("/") { inbound, _, _ in
+        _ = try? await client.ws("/") { inbound, outbound, _ in
+          try await outbound.write(.text("open"))
           for try await _ in inbound {}
         }
         clientFinished.finish(.success(()))
