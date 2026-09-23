@@ -22,7 +22,9 @@ catalog, and every change to it lands in `CHANGELOG.md`.
   instead of holding the run open. The limit cancels the test's task, so what it ends is a test
   suspended on something that never resumes, not one spinning synchronously. One minute is the
   shortest limit Swift Testing can express and is a guard, not the target; on a parameterized test
-  it bounds each case rather than the whole argument set.
+  it bounds each case rather than the whole argument set. A suite that opens a live socket is
+  `.serialized` and waits only through a cancel-aware type; nothing under `Tests/` blocks a
+  cooperative thread.
 - **Style:** `swift format lint --strict --recursive Sources Tests` must report zero findings under
   the formatter in the `swift:6.3-noble` image, the one CI lints with. `Scripts/verify.sh` runs it in
   that container through Docker, so Docker must be running.
