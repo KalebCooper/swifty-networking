@@ -66,10 +66,14 @@ There is no compression, reconnect, automatic heartbeat or application acknowled
 
 Linux, macOS 27 and iOS 26.5 simulator loopback coverage exercises plaintext and trusted TLS,
 untrusted-certificate and hostname rejection, cancellation during TLS and partial writes, raw
-protocol fixtures and resource shutdown. These runs include NIO 2.102.0 and NIOSSL 2.37.4.
-Android emulator execution, Android application trust-root discovery and application network-policy
-behavior remain unqualified. Other Apple platforms and physical devices were not exercised.
-Linux success does not establish Android support.
+protocol fixtures and resource shutdown. These runs include NIO 2.102.0 and NIOSSL 2.37.4. On Linux,
+a server with a public certificate is trusted through the default roots.
+
+Android support is beta. The suite passes on the Android emulator, but physical devices, trust-root
+discovery inside an Android app and Android network security policy are untested.
+
+The client is unsupported on watchOS, which does not allow the sockets NIO uses. tvOS, visionOS and
+physical Apple devices are not tested.
 
 ## Topics
 

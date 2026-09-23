@@ -56,9 +56,16 @@ A close frame without a code is represented with a nil code.
 The adapter has real-wire loopback coverage on macOS 27 and iOS 26.5 simulator. These fixtures
 exercise HTTP upgrade, WebSocket frames, a locally trusted test CA, rejection of an untrusted CA,
 hostname mismatch and cancellation during TLS. The public transport uses system trust; the test CA
-is supplied only to an internal fixture and is never installed as a system root. Other Apple
-platforms and physical-device lifecycle behavior require separate qualification. Connections are
-not promised to survive backgrounding or run continuously on watchOS.
+is supplied only to an internal fixture and is never installed as a system root. On macOS and the
+iOS simulator, a server with a public certificate is trusted through the system roots. The suite
+also passes on Mac Catalyst and the watchOS 26.5 simulator. tvOS and visionOS build but are not
+runtime-tested, and physical devices are not tested. Connections are not promised to survive
+backgrounding.
+
+On an Apple Watch, `URLSessionWebSocketTask` is low-level networking, which watchOS allows only in
+the contexts Apple's TN3135 lists, such as an active audio streaming session or a CallKit call.
+Elsewhere the connection waits for network access that does not arrive, and the client's connect
+deadline ends the wait. The watchOS simulator does not apply this restriction.
 
 ## Topics
 

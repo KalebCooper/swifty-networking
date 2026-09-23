@@ -21,8 +21,7 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - CI configuration for default, independent portable/logging traits, Hummingbird-only, and combined
-  WebSocket client/server runs. The Android emulator recipe includes WebSocketPortable; hosted
-  execution and Android app qualification remain pending.
+  WebSocket client/server runs. The Android emulator run includes WebSocketPortable.
 - A scoped Hummingbird server adapter behind the WebSocketHummingbird trait. Accepted connections
   use the shared bounded inbox and send queue, send policies and deadlines. Hummingbird keeps
   listener, upgrade, middleware and event-loop ownership.
@@ -30,14 +29,16 @@ All notable changes to this project are documented here. The format follows
   framing, shared receive/send policies and idempotent shutdown of owned channels and event loops.
   Linux, macOS 27 and iOS 26.5 simulator loopback coverage includes certificate and hostname
   rejection and partial-write cancellation. A close completes once both close frames have crossed,
-  without waiting for a TLS peer to answer the closure alert. Android WebSocket qualification
-  remains outstanding.
+  without waiting for a TLS peer to answer the closure alert. Android support is beta, tested on the
+  emulator only. The client is unsupported on watchOS.
 
 - Apple WebSocket connections through URLSessionWebSocketTransport, with owned sessions, redirect
   refusal, explicit credentials, bounded shared queues, recoverable read/ping waits and physical
   cancellation. Local CA success, untrusted-root and hostname rejection, and TLS cancellation are
-  covered on macOS 27 and iOS 26.5 simulator. Close returns backend-reported metadata and does not
-  promise peer acknowledgement.
+  covered on macOS 27 and iOS 26.5 simulator, and the suite passes on Mac Catalyst and the watchOS
+  simulator. tvOS and visionOS build but are not runtime-tested. On an Apple Watch, watchOS limits
+  WebSocket connections to the contexts TN3135 lists. Close returns backend-reported metadata and
+  does not promise peer acknowledgement.
 
 - WebSocket async send and synchronous enqueue share one bounded FIFO with configurable message/byte
   capacities, admission/failure policies, per-call policy overrides and a 30-second send deadline

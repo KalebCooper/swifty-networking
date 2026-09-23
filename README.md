@@ -12,10 +12,10 @@ test support included.
 
 The unreleased WebSocket products provide an injected client, explicit connection ownership, bounded
 receiving and sending, synchronous submission, shared send completion and graceful close. Apple has a
-URLSession client with local CA, hostname and TLS cancellation coverage on macOS and iOS simulator;
-the opt-in NIO client is qualified on Linux, macOS and iOS simulator. The opt-in
-Hummingbird server adapter is qualified on macOS and Linux. Android WebSocket execution and app trust
-behavior remain unqualified, so Android WebSocket support is not advertised.
+URLSession client, tested on macOS, the iOS simulator, Mac Catalyst and the watchOS simulator. The
+opt-in NIO client is tested on Linux, macOS and the iOS simulator, with beta Android support. The
+opt-in Hummingbird server adapter is tested on macOS and Linux. [Requirements](#requirements) lists
+each platform's limits.
 
 ## In under a minute
 
@@ -489,10 +489,20 @@ import Testing
 - An independent, off-by-default `WebSocketHummingbird` trait adds Hummingbird 2.26.0+ and
   HummingbirdWebSocket 2.7.0+ for the macOS/Linux server adapter. It does not require
   `WebSocketPortable`. Default and client-only consumers do not resolve Hummingbird.
-- The URLSession adapter is tested on macOS 27 and iOS 26.5 simulator. The NIO client has loopback
-  protocol and TLS coverage on Linux, macOS 27 and iOS 26.5 simulator, including the approved
-  NIO 2.102.0 / NIOSSL 2.37.4 minimums. Android WebSocket execution, system-root discovery in an
-  Android app, other Apple platforms and physical devices remain unqualified.
+- `WebSocketURLSession` is tested on macOS 27, the iOS 26.5 simulator, Mac Catalyst and the watchOS
+  26.5 simulator, and trusts a public certificate through the system roots on macOS and the iOS
+  simulator. tvOS and visionOS build but are not runtime-tested. Physical devices are not tested.
+- On an Apple Watch, watchOS allows a WebSocket only in the contexts Apple's
+  [TN3135](https://developer.apple.com/documentation/technotes/tn3135-low-level-networking-on-watchos)
+  lists, such as an active audio streaming session or a CallKit call. Elsewhere the connection waits
+  for network access that does not arrive, and the connect deadline ends it. The watchOS simulator
+  does not apply this restriction.
+- `WebSocketPortable` has loopback protocol and TLS coverage on Linux, macOS 27 and the iOS 26.5
+  simulator at the NIO 2.102.0 / NIOSSL 2.37.4 minimums, and trusts a public certificate through the
+  default roots on Linux. Android support is beta: the suite passes on the Android emulator, but
+  physical devices, trust-root discovery inside an app and Android network security policy are
+  untested. It is unsupported on watchOS, which does not allow the sockets NIO uses, and is not
+  tested on tvOS or visionOS.
 
 ## Products
 
