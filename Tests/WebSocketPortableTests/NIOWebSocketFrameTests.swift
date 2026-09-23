@@ -8,7 +8,7 @@ import Testing
 import WebSocketCore
 @testable import WebSocketPortable
 
-@Suite("NIO WebSocket framing", .timeLimit(.minutes(suiteTimeLimitMinutes)))
+@Suite("NIO WebSocket framing", .serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
 struct NIOWebSocketFrameTests {
   @Test("Abrupt channel closure fails instead of inventing a normal close")
   func abruptClosure() async throws {

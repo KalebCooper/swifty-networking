@@ -89,7 +89,7 @@ private func startExchange(over feed: Feed, arrivingAt ended: Latch) -> Streamin
   return exchange
 }
 
-@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct StreamingExchangeTests {
+@Suite(.serialized, .timeLimit(.minutes(suiteTimeLimitMinutes))) struct StreamingExchangeTests {
   @Test("A body delivered in three buffers arrives as three chunks in order")
   func aBodyDeliveredInThreeBuffersArrivesAsThreeChunksInOrder() async throws {
     let feed = Feed()
@@ -260,7 +260,7 @@ private func startExchange(over feed: Feed, arrivingAt ended: Latch) -> Streamin
   }
 }
 
-@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct PumpControlTests {
+@Suite(.serialized, .timeLimit(.minutes(suiteTimeLimitMinutes))) struct PumpControlTests {
   @Test("A task parked by suspend passes once resume is called")
   func aTaskParkedBySuspendPassesOnceResumeIsCalled() async throws {
     let control = PumpControl()

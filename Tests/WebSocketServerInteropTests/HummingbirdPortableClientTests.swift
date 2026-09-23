@@ -14,7 +14,9 @@ import FoundationEssentials
 import Foundation
 #endif
 
-@Suite("Hummingbird and NIO client interoperability", .timeLimit(.minutes(suiteTimeLimitMinutes)))
+@Suite(
+  "Hummingbird and NIO client interoperability", .serialized,
+  .timeLimit(.minutes(suiteTimeLimitMinutes)))
 struct HummingbirdPortableClientTests {
   @Test("NIO clients exchange messages and closing one leaves another connection usable")
   func independentConnections() async throws {

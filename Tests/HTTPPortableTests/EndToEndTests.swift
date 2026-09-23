@@ -54,7 +54,8 @@ private let body = Fixtures.jsonObject(["name": "Ada"])
 private let correlationID = "e2e-1"
 private let path = "/people/1"
 
-@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct AsyncHTTPClientEndToEndTests {
+@Suite(.serialized, .timeLimit(.minutes(suiteTimeLimitMinutes))) struct AsyncHTTPClientEndToEndTests
+{
   @Test(
     "A 401 refreshes and replays, a closed connection retries, and the second attempt decodes the body"
   )

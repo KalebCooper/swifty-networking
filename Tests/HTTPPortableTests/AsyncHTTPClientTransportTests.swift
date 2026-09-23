@@ -39,7 +39,8 @@ private func redirectScript() -> [Answer] {
 /// An error from a domain that has no mapping of its own.
 private struct UnmappedError: Error {}
 
-@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct AsyncHTTPClientTransportResponseTests {
+@Suite(.serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
+struct AsyncHTTPClientTransportResponseTests {
   @Test("The status, header fields, and body reach the caller")
   func statusHeadersAndBodyReachTheCaller() async throws {
     let script = Script(answers: [
@@ -159,7 +160,8 @@ private struct UnmappedError: Error {}
   }
 }
 
-@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct AsyncHTTPClientTransportFailureTests {
+@Suite(.serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
+struct AsyncHTTPClientTransportFailureTests {
   @Test(
     "Each client error maps to its kind",
     arguments: [
@@ -363,7 +365,8 @@ private struct UnmappedError: Error {}
 }
 
 /// The redirect refusal against a client that would follow, with a control leg proving it would.
-@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct AsyncHTTPClientTransportRedirectTests {
+@Suite(.serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
+struct AsyncHTTPClientTransportRedirectTests {
   @Test("A client left to its own devices follows the redirect, so the refusals below do work")
   func aBareClientFollows() async throws {
     let script = Script(answers: redirectScript())
@@ -446,7 +449,8 @@ private func bothPaths(
 }
 
 /// The body kinds and the options, as each reaches the request the client sends.
-@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct AsyncHTTPClientTransportBoundaryTests {
+@Suite(.serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
+struct AsyncHTTPClientTransportBoundaryTests {
   @Test("A file body is sent from the file with its size announced")
   func aFileBodyIsSentFromTheFile() async throws {
     let contents = Data("recording bytes".utf8)
@@ -660,7 +664,8 @@ private func bothPaths(
 /// The streaming half of `AsyncHTTPClientTransport`, over the same loopback server the suites
 /// above send through. Chunk boundaries and flow control are proven at the exchange, by hand, in
 /// `StreamingExchangeTests`; here the body is asserted by its bytes.
-@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct AsyncHTTPClientTransportStreamingTests {
+@Suite(.serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
+struct AsyncHTTPClientTransportStreamingTests {
   @Test("The status, header fields, and body reach the caller")
   func statusHeadersAndBodyReachTheCaller() async throws {
     let script = Script(answers: [
@@ -882,7 +887,8 @@ private func bothPaths(
 
 /// The conversion of a client response's head, driven by hand for the one answer the network
 /// never produces: a header field name this package cannot represent.
-@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct AsyncHTTPClientTransportHeadTests {
+@Suite(.serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
+struct AsyncHTTPClientTransportHeadTests {
   @Test("A header field name no HTTP field can carry fails the response naming the field")
   func anInvalidHeaderFieldNameFailsTheResponse() throws {
     let response = HTTPClientResponse(status: .ok, headers: ["Bad Name": "value"])

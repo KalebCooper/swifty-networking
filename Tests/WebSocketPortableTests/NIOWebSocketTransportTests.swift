@@ -11,7 +11,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
-@Suite("NIO WebSocket transport", .timeLimit(.minutes(suiteTimeLimitMinutes)))
+@Suite("NIO WebSocket transport", .serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
 struct NIOWebSocketTransportTests {
   @Test(
     "Opening head size and field count limits fail as resource errors",
