@@ -54,6 +54,10 @@ protocol violations remain distinct. Inbox overflow uses the shared bounded-clos
 is a failure. Empty peer close and raw application codes are preserved. Close completion reports
 backend metadata and is not an application acknowledgement.
 
+A close completes once both close frames have crossed. Tearing down a TLS connection afterward
+sends a closure alert that many servers never answer, so the close result does not wait for it;
+``NIOWebSocketTransport/shutdown()`` does, bounded by NIOSSL's shutdown timeout.
+
 The limits bound package payloads and frame assembly, not total process memory. Kernel sockets,
 TLS buffers, NIO allocation capacity and temporary copies remain outside inbox accounting.
 There is no compression, reconnect, automatic heartbeat or application acknowledgement protocol.

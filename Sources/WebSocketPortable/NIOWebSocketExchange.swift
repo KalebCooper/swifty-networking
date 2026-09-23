@@ -121,24 +121,20 @@ final class NIOWebSocketExchange: Sendable {
     guard let effects else { return }
     effects.1?.finish(.failure(WebSocketError(close: close, kind: .closed)))
     let channel = state.withLock { $0.channel }
-    let finish: @Sendable () -> Void = {
-      guard let channel else { return }
-      channel.close().whenComplete { _ in
-        self.closing.finish(.success(close))
-        self.inbox.finish(.success(close))
-      }
+    // The close handshake is complete once both close frames have crossed. Closing the channel
+    // then sends a TLS closure alert that a peer may never answer, so the result does not wait for
+    // the channel to finish closing. `released` still tracks that for shutdown.
+    let finish: @Sendable (Result<WebSocketClose, WebSocketError>) -> Void = { result in
+      self.closing.finish(result)
+      self.inbox.finish(result)
+      channel?.close(promise: nil)
     }
     if effects.0 {
       write(opcode: .connectionClose, payload: payload).whenComplete { result in
-        if case .failure(let error) = result {
-          let failure = Self.error(error)
-          self.closing.finish(.failure(failure))
-          self.inbox.finish(.failure(failure))
-        }
-        finish()
+        finish(result.map { close }.mapError(Self.error))
       }
     } else {
-      finish()
+      finish(.success(close))
     }
   }
 

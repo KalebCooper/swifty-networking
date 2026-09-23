@@ -122,6 +122,37 @@ struct NIOWebSocketTransportTests {
     }
   }
 
+  @Test("A close answered by a TLS peer returns before the peer answers the closure alert")
+  func closeAnsweredOverTLS() async throws {
+    let server = RawWebSocketServer()
+    let transport = try transport()
+    do {
+      try await server.start(tls: true)
+      let socket = try await WebSocketClient(clock: RecordingClock(), transport: transport)
+        .connect(to: url(server, tls: true))
+      let close = Task { try await socket.close() }
+      var frames = server.frames.makeAsyncIterator()
+      let frame = try #require(await frames.next())
+      #expect(frame[0] == 0x88)
+      // The peer stops reading, so the closure alert the client sends next is never answered,
+      // which is how a server that drops the connection without one looks to the client.
+      let peer = try await server.accepted.wait()
+      try await peer.setOption(ChannelOptions.autoRead, value: false).get()
+      try await peer.writeAndFlush(ByteBuffer(bytes: [0x88, 2, 0x03, 0xE8])).get()
+      #expect(try await close.value.code == .normalClosure)
+      #expect(transport.connectionCount == 1)
+      try await peer.setOption(ChannelOptions.autoRead, value: true).get()
+      try await server.closed.wait()
+      try await transport.shutdown()
+      #expect(transport.connectionCount == 0)
+      try await server.stop()
+    } catch {
+      try? await transport.shutdown()
+      try? await server.stop()
+      throw error
+    }
+  }
+
   @Test("Closing one connection and releasing its last owner leaves another connection usable")
   func independentOwners() async throws {
     let first = RawWebSocketServer()

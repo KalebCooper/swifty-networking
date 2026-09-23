@@ -29,7 +29,9 @@ All notable changes to this project are documented here. The format follows
 - NIOWebSocketTransport in the opt-in WebSocketPortable product, with verified TLS, bounded RFC
   framing, shared receive/send policies and idempotent shutdown of owned channels and event loops.
   Linux, macOS 27 and iOS 26.5 simulator loopback coverage includes certificate and hostname
-  rejection and partial-write cancellation. Android WebSocket qualification remains outstanding.
+  rejection and partial-write cancellation. A close completes once both close frames have crossed,
+  without waiting for a TLS peer to answer the closure alert. Android WebSocket qualification
+  remains outstanding.
 
 - Apple WebSocket connections through URLSessionWebSocketTransport, with owned sessions, redirect
   refusal, explicit credentials, bounded shared queues, recoverable read/ping waits and physical
