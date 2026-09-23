@@ -861,28 +861,28 @@ private let highWatermark = 512 * 1024
 ///
 /// `resume()`, `suspend()`, and `cancel()` settle the task's state on the session's own queue, not
 /// on the caller's, so a read straight after the call can see the state before the transition. The
-/// observation fires for the current state first, so a task already there returns at once, and the
-/// continuation is resumed exactly once however many changes follow.
+/// observation fires for the current state first, so a task already there returns at once, and only
+/// the first matching state is kept however many changes follow.
+///
+/// - Throws: `CancellationError` when the waiting task is cancelled before a matching state.
 private func settle(
   _ task: URLSessionTask, in states: Set<URLSessionTask.State>
-) async -> URLSessionTask.State {
-  let resumed = Mutex(false)
-  var observation: NSKeyValueObservation?
-  let observed = await withCheckedContinuation {
-    (continuation: CheckedContinuation<URLSessionTask.State, Never>) in
-    observation = task.observe(\.state, options: [.initial, .new]) { task, _ in
-      let state = task.state
-      guard states.contains(state) else { return }
-      let first = resumed.withLock { flag -> Bool in
-        if flag { return false }
-        flag = true
-        return true
-      }
-      if first { continuation.resume(returning: state) }
+) async throws -> URLSessionTask.State {
+  let latch = Latch()
+  let observed = Mutex<URLSessionTask.State?>(nil)
+  let observation = task.observe(\.state, options: [.initial, .new]) { task, _ in
+    let state = task.state
+    guard states.contains(state) else { return }
+    let first = observed.withLock { observed -> Bool in
+      guard observed == nil else { return false }
+      observed = state
+      return true
     }
+    if first { latch.arrive() }
   }
-  observation?.invalidate()
-  return observed
+  defer { observation.invalidate() }
+  try await latch.wait(forCount: 1)
+  return try #require(observed.withLock { $0 })
 }
 
 /// A session over `IdleURLProtocol` and a task of it, not yet resumed, so the delegate callbacks a
@@ -905,11 +905,16 @@ private func redirectAnswer(
       url: endpointURL, statusCode: 302, httpVersion: "HTTP/1.1",
       headerFields: ["Location": elsewhere]))
   let next = URLRequest(url: URL.fixture("https://example.com/v1/elsewhere"))
-  return await withCheckedContinuation { continuation in
-    delegate.urlSession?(
-      session, task: task, willPerformHTTPRedirection: response, newRequest: next
-    ) { continuation.resume(returning: $0) }
+  let answer = Mutex<URLRequest?>(nil)
+  let latch = Latch()
+  delegate.urlSession?(
+    session, task: task, willPerformHTTPRedirection: response, newRequest: next
+  ) { request in
+    answer.withLock { $0 = request }
+    latch.arrive()
   }
+  try await latch.wait(forCount: 1)
+  return answer.withLock { $0 }
 }
 
 /// The delegate driven by hand, one callback at a time, since no `URLProtocol` can deliver a body
@@ -985,26 +990,26 @@ private func redirectAnswer(
     #expect(task.state == .suspended)
 
     control.resume()
-    let resumed = await settle(task, in: [.running])
+    let resumed = try await settle(task, in: [.running])
     #expect(resumed == .running)
 
     control.suspend()
-    let suspended = await settle(task, in: [.suspended])
+    let suspended = try await settle(task, in: [.suspended])
     #expect(suspended == .suspended)
 
     control.resume()
-    let resumedAgain = await settle(task, in: [.running])
+    let resumedAgain = try await settle(task, in: [.running])
     #expect(resumedAgain == .running)
 
     // `cancel()` moves the task to `canceling`; the loading system finishes it from there, so
     // either state is the task cancelled.
     control.cancel()
-    let cancelled = await settle(task, in: [.canceling, .completed])
+    let cancelled = try await settle(task, in: [.canceling, .completed])
     #expect(cancelled == .canceling || cancelled == .completed)
 
     // A late resume, the one a buffer sends once its reader drains, leaves a cancelled task alone.
     control.resume()
-    let afterLateResume = await settle(task, in: [.canceling, .completed])
+    let afterLateResume = try await settle(task, in: [.canceling, .completed])
     #expect(afterLateResume == .canceling || afterLateResume == .completed)
   }
 

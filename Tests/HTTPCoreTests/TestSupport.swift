@@ -22,15 +22,13 @@ final class CountingControl: FlowControl {
     case suspend
   }
 
-  private struct State {
-    var calls: [Call] = []
-    var waiters: [(call: Call, continuation: CheckedContinuation<Void, Never>)] = []
-  }
-
-  private let state = Mutex(State())
+  private let cancelled = Latch()
+  private let log = Mutex<[Call]>([])
+  private let resumed = Latch()
+  private let suspended = Latch()
 
   var calls: [Call] {
-    state.withLock { $0.calls }
+    log.withLock { $0 }
   }
 
   func cancel() {
@@ -47,31 +45,25 @@ final class CountingControl: FlowControl {
 
   /// Waits for the buffer to make `call`, returning at once when it already has.
   ///
-  /// A waiter is resumed inside the same critical section that records the call, so a resume is
-  /// never left owing and a test waits on the buffer's own progress rather than polling for it.
-  func wait(for call: Call) async {
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-      let resumeNow = state.withLock { state -> Bool in
-        guard !state.calls.contains(call) else { return true }
-        state.waiters.append((call: call, continuation: continuation))
-        return false
-      }
-      if resumeNow {
-        continuation.resume()
-      }
+  /// A call is logged before its latch counts it, so a test waits on the buffer's own progress
+  /// rather than polling for it, and the log already holds the call when the wait returns.
+  ///
+  /// - Throws: `CancellationError` when the waiting task is cancelled before the call arrives.
+  func wait(for call: Call) async throws(CancellationError) {
+    try await latch(for: call).wait(forCount: 1)
+  }
+
+  private func latch(for call: Call) -> Latch {
+    switch call {
+    case .cancel: cancelled
+    case .resume: resumed
+    case .suspend: suspended
     }
   }
 
   private func record(_ call: Call) {
-    let due = state.withLock { state -> [CheckedContinuation<Void, Never>] in
-      state.calls.append(call)
-      let ready = state.waiters.filter { $0.call == call }
-      state.waiters.removeAll { $0.call == call }
-      return ready.map(\.continuation)
-    }
-    for continuation in due {
-      continuation.resume()
-    }
+    log.withLock { $0.append(call) }
+    latch(for: call).arrive()
   }
 }
 

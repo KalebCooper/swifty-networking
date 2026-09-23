@@ -9,7 +9,6 @@ import Foundation
 #endif
 
 import HTTPTesting
-import Synchronization
 import Testing
 import WebSocketCore
 
@@ -18,10 +17,10 @@ import WebSocketCore
 struct WebSocketSendSettlementTests {
   private final class LateConnection: WebSocketConnection {
     let finished = WebSocketRendezvous()
-    let gate: ReleaseGate
+    let gate: WebSocketRendezvous
     let script: ScriptedWebSocketConnection
 
-    init(gate: ReleaseGate, script: ScriptedWebSocketConnection) {
+    init(gate: WebSocketRendezvous, script: ScriptedWebSocketConnection) {
       self.gate = gate
       self.script = script
     }
@@ -40,7 +39,9 @@ struct WebSocketSendSettlementTests {
     func send(_ message: WebSocket.Message) async throws(WebSocketError) {
       // Record the call without retaining its payload in the script.
       try await script.send(.text("recorded"))
-      await gate.wait()
+      // An unstructured task does not inherit this send's cancellation, so the backend models a
+      // result that arrives late; each test's deferred release frees the waiter.
+      await Task { try? await gate.arriveAndWait() }.value
       finished.arrive()
     }
   }
@@ -52,39 +53,6 @@ struct WebSocketSendSettlementTests {
       async throws(WebSocketError) -> LateConnection
     {
       backend
-    }
-  }
-
-  /// Deliberately ignores cancellation so tests can deliver a late backend result.
-  private final class ReleaseGate: Sendable {
-    private struct State {
-      var released = false
-      var waiter: CheckedContinuation<Void, Never>?
-    }
-
-    let arrived = WebSocketRendezvous()
-    private let state = Mutex(State())
-
-    func release() {
-      let waiter = state.withLock { state in
-        state.released = true
-        let waiter = state.waiter
-        state.waiter = nil
-        return waiter
-      }
-      waiter?.resume()
-    }
-
-    func wait() async {
-      await withCheckedContinuation { continuation in
-        let ready = state.withLock { state in
-          if state.released { return true }
-          state.waiter = continuation
-          return false
-        }
-        arrived.arrive()
-        if ready { continuation.resume() }
-      }
     }
   }
 
@@ -201,7 +169,7 @@ struct WebSocketSendSettlementTests {
     "A late backend success cannot replace cancellation or start a later send",
     arguments: [WebSocket.SendPolicy.rejectOverlapping, .serialize])
   func lateSuccessCannotResurrectSend(_ policy: WebSocket.SendPolicy) async throws {
-    let gate = ReleaseGate()
+    let gate = WebSocketRendezvous()
     let receive = WebSocketRendezvous()
     let script = ScriptedWebSocketConnection(steps: [
       .init(gate: receive, result: .success(.message(nil))),
@@ -214,7 +182,7 @@ struct WebSocketSendSettlementTests {
     defer { gate.release(); socket.cancel() }
     try await receive.waitForArrival()
     let first = try socket.enqueue("first")
-    try await gate.arrived.waitForArrival()
+    try await gate.waitForArrival()
     let second = try socket.enqueue("second", policy: .serialize)
     first.cancel()
     await #expect { try await first.wait() } throws: { ($0 as? WebSocketError)?.kind == .cancelled }
@@ -281,7 +249,7 @@ struct WebSocketSendSettlementTests {
   #if canImport(Darwin)
   @Test("A retained completed operation releases the backing payload")
   func resultDoesNotRetainPayload() async throws {
-    let gate = ReleaseGate()
+    let gate = WebSocketRendezvous()
     let receive = WebSocketRendezvous()
     let script = ScriptedWebSocketConnection(steps: [
       .init(gate: receive, result: .success(.message(nil))),
@@ -301,7 +269,7 @@ struct WebSocketSendSettlementTests {
     #expect(backing != nil)
     let operation = try socket.enqueue(try #require(data))
     data = nil
-    try await gate.arrived.waitForArrival()
+    try await gate.waitForArrival()
     #expect(backing != nil)
     gate.release()
     // A later write proves the writer has left the first message's scope.

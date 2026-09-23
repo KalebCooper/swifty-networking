@@ -285,7 +285,7 @@ struct HTTPClientStreamingTests {
     let client = makeClient(transport: transport)
 
     let reader = Task { await failure(of: { try await client.stream(request) }) }
-    await control.wait(for: .resume)
+    try await control.wait(for: .resume)
     reader.cancel()
 
     #expect(isCancelled(try #require(await reader.value)))
