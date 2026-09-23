@@ -155,7 +155,7 @@ private func startExchange(over feed: Feed, arrivingAt ended: Latch) -> Streamin
     } failure: { error in
       AsyncHTTPClientTransport.failure(from: error)
     }
-    await started.wait(forCount: 1)
+    try await started.wait(forCount: 1)
 
     exchange.cancel()
 
@@ -179,7 +179,7 @@ private func startExchange(over feed: Feed, arrivingAt ended: Latch) -> Streamin
 
     // The first pull is made as soon as the head is delivered; one chunk past the high watermark
     // answers it, and the buffer suspends the exchange before it can pull again.
-    await feed.pulls.wait(forCount: 1)
+    try await feed.pulls.wait(forCount: 1)
     feed.yield(count: highWatermark + 1)
 
     // Taking the chunk drains the buffer to nothing, which is at or below the low watermark, and
@@ -188,7 +188,7 @@ private func startExchange(over feed: Feed, arrivingAt ended: Latch) -> Streamin
     // this test proves the resume reaches the pull.
     let first = try await iterator.next()
     #expect(first?.count == highWatermark + 1)
-    await feed.pulls.wait(forCount: 2)
+    try await feed.pulls.wait(forCount: 2)
 
     feed.finish()
     let end = try await iterator.next()
@@ -202,12 +202,12 @@ private func startExchange(over feed: Feed, arrivingAt ended: Latch) -> Streamin
     let exchange = startExchange(over: feed, arrivingAt: ended)
     _ = try await exchange.response()
     let body = exchange.makeBody()
-    await feed.pulls.wait(forCount: 1)
+    try await feed.pulls.wait(forCount: 1)
     feed.yield(count: highWatermark + 1)
 
     _ = consume body
 
-    await ended.wait(forCount: 1)
+    try await ended.wait(forCount: 1)
   }
 
   @Test("Dropping the body while the exchange is waiting on the client ends the task")
@@ -217,11 +217,11 @@ private func startExchange(over feed: Feed, arrivingAt ended: Latch) -> Streamin
     let exchange = startExchange(over: feed, arrivingAt: ended)
     _ = try await exchange.response()
     let body = exchange.makeBody()
-    await feed.pulls.wait(forCount: 1)
+    try await feed.pulls.wait(forCount: 1)
 
     _ = consume body
 
-    await ended.wait(forCount: 1)
+    try await ended.wait(forCount: 1)
   }
 
   @Test("A run that returns without delivering fails the response as other, so no caller parks")
@@ -251,7 +251,7 @@ private func startExchange(over feed: Feed, arrivingAt ended: Latch) -> Streamin
     let ended = Latch()
     let exchange = startExchange(over: feed, arrivingAt: ended)
     feed.finish()
-    await ended.wait(forCount: 1)
+    try await ended.wait(forCount: 1)
 
     #expect(try await exchange.response().status.code == 200)
     let (received, failure) = await drain(exchange.makeBody())
@@ -272,11 +272,11 @@ private func startExchange(over feed: Feed, arrivingAt ended: Latch) -> Streamin
       await control.waitWhileSuspended()
       passed.arrive()
     }
-    await entered.wait(forCount: 1)
+    try await entered.wait(forCount: 1)
 
     control.resume()
 
-    await passed.wait(forCount: 1)
+    try await passed.wait(forCount: 1)
     await waiting.value
   }
 
@@ -292,11 +292,11 @@ private func startExchange(over feed: Feed, arrivingAt ended: Latch) -> Streamin
       if Task.isCancelled { cancelled.arrive() }
     }
     control.attach(waiting)
-    await entered.wait(forCount: 1)
+    try await entered.wait(forCount: 1)
 
     control.cancel()
 
-    await cancelled.wait(forCount: 1)
+    try await cancelled.wait(forCount: 1)
     await waiting.value
   }
 
@@ -312,7 +312,7 @@ private func startExchange(over feed: Feed, arrivingAt ended: Latch) -> Streamin
     }
     control.attach(late)
 
-    await cancelled.wait(forCount: 1)
+    try await cancelled.wait(forCount: 1)
     await late.value
   }
 

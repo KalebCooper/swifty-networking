@@ -345,17 +345,17 @@ struct StreamedBodyTests {
     let latch = Latch()
     let readers = 10
 
-    let read = await withTaskGroup(of: Int.self) { group in
+    let read = try await withThrowingTaskGroup(of: Int.self) { group in
       for _ in 0..<readers {
         group.addTask {
           var iterator = StreamedBody(WatchedChunks(counter: counter)).makeAsyncIterator()
           let chunk = try? await iterator.next()
           latch.arrive()
-          await latch.wait(forCount: readers)
+          try await latch.wait(forCount: readers)
           return chunk == nil ? 0 : 1
         }
       }
-      return await group.reduce(0, +)
+      return try await group.reduce(0, +)
     }
 
     #expect(read == readers)

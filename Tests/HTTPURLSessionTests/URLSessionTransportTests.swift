@@ -772,7 +772,7 @@ private func drain(_ body: StreamedBody) async -> (received: [Data], failure: Tr
     defer { session.invalidateAndCancel() }
 
     let call = Task { await streamFailure(sending: target(), through: transport) }
-    await NeverAnsweringURLProtocol.started.wait(forCount: 1)
+    try await NeverAnsweringURLProtocol.started.wait(forCount: 1)
     call.cancel()
     let error = try #require(await call.value)
 

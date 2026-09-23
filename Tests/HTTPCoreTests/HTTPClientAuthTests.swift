@@ -29,7 +29,11 @@ private final class HoldingRefresher: TokenRefresher, Sendable {
 
   func refresh() async throws(TransportError) {
     cancellation.withLock { $0 = $0 || Task.isCancelled }
-    await latch.wait(forCount: arrivals)
+    do {
+      try await latch.wait(forCount: arrivals)
+    } catch {
+      throw .cancelled
+    }
     try await tokens.refresh()
   }
 }
@@ -509,7 +513,7 @@ struct HTTPClientSingleFlightTests {
 
     let first = Task { try await client.execute(Request(path: path)).status }
     let second = Task { try await client.execute(Request(path: path)).status }
-    await latch.wait(forCount: 2)
+    try await latch.wait(forCount: 2)
     second.cancel()
     latch.arrive()
 

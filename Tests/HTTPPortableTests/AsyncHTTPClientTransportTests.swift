@@ -321,7 +321,7 @@ private struct UnmappedError: Error {}
     let script = Script(answers: [.hang])
     try await withLoopback(script) { server, transport in
       let call = Task { await failure(sending: target(of: server), through: transport) }
-      await script.arrived.wait(forCount: 1)
+      try await script.arrived.wait(forCount: 1)
       call.cancel()
       let error = try #require(await call.value)
 
@@ -554,7 +554,7 @@ private func bothPaths(
         await failure(
           sending: target(of: server, method: .put), body: .file(file), through: transport)
       }
-      await script.arrived.wait(forCount: 2)
+      try await script.arrived.wait(forCount: 2)
       call.cancel()
       let error = try #require(await call.value)
       #expect(isCancelled(error))
@@ -591,11 +591,11 @@ private func bothPaths(
       var response: StreamedResponse? = try await transport.stream(
         target(of: server, method: .put), body: .file(file), options: TransportOptions())
       #expect(response?.status.code == 200)
-      await script.opened.wait(forCount: 1)
+      try await script.opened.wait(forCount: 1)
       #expect(try openDescriptors(on: file) == 1)
 
       response = nil
-      await script.closed.wait(forCount: 1)
+      try await script.closed.wait(forCount: 1)
 
       // The close follows the connection closing by however long the cancelled task takes to
       // unwind; this yields to it rather than waiting on a clock.
@@ -759,7 +759,7 @@ private func bothPaths(
     let script = Script(answers: [.hang])
     try await withLoopback(script) { server, transport in
       let call = Task { await streamFailure(sending: target(of: server), through: transport) }
-      await script.arrived.wait(forCount: 1)
+      try await script.arrived.wait(forCount: 1)
       call.cancel()
       let error = try #require(await call.value)
 
@@ -850,12 +850,12 @@ private func bothPaths(
         return responses
       }
       #expect(responses?.count == 20)
-      await script.opened.wait(forCount: 20)
+      try await script.opened.wait(forCount: 20)
 
       // The only references to the twenty bodies go here, and with them every request still
       // fetching one.
       responses = nil
-      await script.closed.wait(forCount: 20)
+      try await script.closed.wait(forCount: 20)
 
       #expect(script.requests.count == 20)
     }
@@ -872,10 +872,10 @@ private func bothPaths(
       var response: StreamedResponse? = try await transport.stream(
         target(of: server, method: .put), body: .file(file), options: TransportOptions())
       #expect(response?.status.code == 200)
-      await script.opened.wait(forCount: 1)
+      try await script.opened.wait(forCount: 1)
 
       response = nil
-      await script.closed.wait(forCount: 1)
+      try await script.closed.wait(forCount: 1)
     }
   }
 }

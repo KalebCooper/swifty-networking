@@ -3,6 +3,7 @@
 #if HTTPPortable
 
 import Foundation
+import HTTPTesting
 import NIOCore
 import NIOHTTP1
 import NIOPosix

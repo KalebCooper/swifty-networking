@@ -97,10 +97,11 @@ private func finishedBodies(_ events: [RecordingObserver.Event]) -> [BodyEvent] 
 }
 
 /// A body delivering one chunk to each iterator and then holding every iterator at its end until
-/// `count` of them have arrived, so the ends are reached together.
+/// `count` of them have arrived, so the ends are reached together. A held iterator whose task is
+/// cancelled throws `CancellationError`.
 private struct HeldEnd: AsyncSequence, Sendable {
   typealias Element = Data
-  typealias Failure = Never
+  typealias Failure = CancellationError
 
   let count: Int
   let latch: Latch
@@ -110,13 +111,13 @@ private struct HeldEnd: AsyncSequence, Sendable {
     let latch: Latch
     var delivered = false
 
-    mutating func next() async -> Data? {
+    mutating func next() async throws(CancellationError) -> Data? {
       guard delivered else {
         delivered = true
         return Data("ab".utf8)
       }
       latch.arrive()
-      await latch.wait(forCount: count)
+      try await latch.wait(forCount: count)
       return nil
     }
   }
@@ -572,7 +573,7 @@ struct HTTPClientStreamingTests {
           while try await iterator.next() != nil {}
         }
       }
-      await latch.wait(forCount: 8)
+      try await latch.wait(forCount: 8)
       for (_, continuation) in bodies {
         continuation.yield(Data("cde".utf8))
         continuation.finish()
