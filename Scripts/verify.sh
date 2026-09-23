@@ -213,6 +213,50 @@ check_job_timeouts() {
   fi
 }
 
+# awk functions shared by the checks that read Swift source rather than grep it, prepended to each
+# program. `code` reduces a line to its code: string contents dropped, and everything from a trailing
+# comment on; a comment is only a comment outside a string, so the two are tracked in one pass.
+# `is_suite` recognizes a suite wherever it is written, indented inside another suite or behind
+# another attribute on the same line. `suite_attribute` reads the attribute across its whole argument
+# list, reduced to code, because swift-format wraps a long one onto a second line.
+SWIFT_SOURCE_AWK='
+  function code(s,   i, c, out, instr, esc) {
+    out = ""; instr = 0; esc = 0
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (instr) {
+        if (esc) esc = 0
+        else if (c == "\\") esc = 1
+        else if (c == "\"") instr = 0
+        continue
+      }
+      if (c == "\"") { instr = 1; continue }
+      if (c == "/" && substr(s, i + 1, 1) == "/") break
+      out = out c
+    }
+    return out
+  }
+  function balance(s,   i, c, d) {
+    d = 0
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (c == "(") d++
+      else if (c == ")") d--
+    }
+    return d
+  }
+  function is_suite() {
+    return $0 ~ /^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?[[:space:]]+)*@Suite([[:space:](]|$)/
+  }
+  function suite_attribute(   buf, chunk, depth) {
+    buf = code($0); depth = balance(buf)
+    while (depth > 0 && (getline) > 0) {
+      chunk = code($0); buf = buf " " chunk; depth += balance(chunk)
+    }
+    return buf
+  }
+'
+
 # Derivation. Every suite under Tests carries the shared time limit, so a test that stops making
 # progress fails its suite instead of holding the run open. The suite set is derived from the tree
 # and must be non-empty. Four things the scan has to survive. The attribute is read across its whole
@@ -228,45 +272,15 @@ check_suite_time_limit() {
   local files report
   files=$(swift_files Tests)
   if [ -z "$files" ]; then fail "$name (no test file found; the check has lost its subject)"; return; fi
-  report=$(awk '
-    # The line reduced to code: string contents dropped, and everything from a trailing comment on.
-    # A comment is only a comment outside a string, so the two are tracked in one pass.
-    function code(s,   i, c, out, instr, esc) {
-      out = ""; instr = 0; esc = 0
-      for (i = 1; i <= length(s); i++) {
-        c = substr(s, i, 1)
-        if (instr) {
-          if (esc) esc = 0
-          else if (c == "\\") esc = 1
-          else if (c == "\"") instr = 0
-          continue
-        }
-        if (c == "\"") { instr = 1; continue }
-        if (c == "/" && substr(s, i + 1, 1) == "/") break
-        out = out c
-      }
-      return out
-    }
-    function balance(s,   i, c, d) {
-      d = 0
-      for (i = 1; i <= length(s); i++) {
-        c = substr(s, i, 1)
-        if (c == "(") d++
-        else if (c == ")") d--
-      }
-      return d
-    }
+  report=$(awk "$SWIFT_SOURCE_AWK"'
     /^[[:space:]]*\/\// { next }
     /^(@[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?[[:space:]]+)*@Test([[:space:](]|$)/ {
       print FILENAME ":" FNR ": a test at file scope has no suite to bound it"
       next
     }
-    /^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?[[:space:]]+)*@Suite([[:space:](]|$)/ {
+    is_suite() {
       total++
-      buf = code($0); loc = FILENAME ":" FNR; depth = balance(buf)
-      while (depth > 0 && (getline) > 0) {
-        chunk = code($0); buf = buf " " chunk; depth += balance(chunk)
-      }
+      loc = FILENAME ":" FNR; buf = suite_attribute()
       if (index(buf, "suiteTimeLimitMinutes") == 0) print loc ": " buf
       next
     }
@@ -279,6 +293,121 @@ check_suite_time_limit() {
   else
     fail "$name"; printf '%s\n' "$report"
   fi
+}
+
+# The test targets whose suites open real sockets: loopback servers, TLS listeners, and live
+# WebSocket peers.
+SOCKET_TEST_DIRS=(
+  Tests/HTTPPortableTests
+  Tests/WebSocketHummingbirdTests
+  Tests/WebSocketPortableTests
+  Tests/WebSocketServerInteropTests
+  Tests/WebSocketURLSessionTests
+)
+
+# Derivation. Every suite in a socket-backed test target is `.serialized`. Swift Testing starts every
+# test of a parallel suite at once, so an unserialized socket suite opens as many connections, event
+# loop hops, and TLS handshakes as it has tests, all competing for a cooperative pool a CI runner
+# sizes to its few cores; serialized, the live sockets in flight are bounded by the number of suites.
+# The suite is recognized and its attribute read the way the time-limit check reads it, so a display
+# name or a comment naming the trait cannot stand in for it. Each directory must exist and hold at
+# least one suite, so a renamed or emptied target fails loudly instead of leaving the list stale.
+check_socket_suites_serialized() {
+  local name="every suite in a socket-backed test target is .serialized"
+  local dir files report hits="" lost=""
+  for dir in "${SOCKET_TEST_DIRS[@]}"; do
+    files=$(swift_files "$dir")
+    if [ -z "$files" ]; then lost="$lost $dir"; continue; fi
+    report=$(awk "$SWIFT_SOURCE_AWK"'
+      /^[[:space:]]*\/\// { next }
+      is_suite() {
+        total++
+        loc = FILENAME ":" FNR; buf = suite_attribute()
+        if (buf !~ /\.serialized([^A-Za-z0-9_]|$)/) print loc ": " buf
+        next
+      }
+      END { if (total == 0) print "NO-SUITES" }
+    ' $files 2>/dev/null || true)
+    if [ "$report" = "NO-SUITES" ]; then
+      lost="$lost $dir"
+    elif [ -n "$report" ]; then
+      hits="$hits$report"$'\n'
+    fi
+  done
+  if [ -n "$lost" ]; then
+    fail "$name (no suite found in$lost; the check has lost its subject)"
+  elif [ -z "$hits" ]; then
+    pass "$name"
+  else
+    fail "$name"; printf '%s' "$hits"
+  fi
+}
+
+# Prohibition. Nothing in Sources or Tests blocks a thread while it waits. Tests run on the
+# cooperative pool, which a CI runner sizes to its few cores, so one blocked thread per test in
+# flight is enough to leave nothing free to finish the work being waited on, and the run hangs
+# instead of failing. Banned: semaphores and dispatch groups, thread sleeps, a synchronous hop onto
+# a queue, a group shut down synchronously, and a `.wait(` with no `await` of its own in the same
+# statement, which is a blocking future wait rather than an awaited one. The statement is the text
+# since the last `;`, `{`, or `}`, so an `await` earlier on the line cannot cover a second call.
+# Under Tests, no event loop group is owned: fixtures share the process-wide singleton, which never
+# shuts down, so a test neither spawns threads per fixture nor blocks on their shutdown. The name is
+# matched as a whole word so `.singletonMultiThreadedEventLoopGroup` passes, and
+# `MultiThreadedEventLoopGroup.singleton`, the same group, is the one spelling excused. String
+# contents and comments are dropped first, so prose may name what it bans.
+check_no_blocking_waits() {
+  local name="no blocking wait in Sources or Tests, and no owned event loop group in Tests"
+  local hits
+  hits=$(awk -v tests="$ROOT/Tests/" "$SWIFT_SOURCE_AWK"'
+    function unawaited_wait(s,   off, i, j, c, seg) {
+      off = 0
+      while ((i = index(substr(s, off + 1), ".wait(")) > 0) {
+        i += off
+        seg = substr(s, 1, i - 1)
+        for (j = length(seg); j > 0; j--) {
+          c = substr(seg, j, 1)
+          if (c == ";" || c == "{" || c == "}") break
+        }
+        if (substr(seg, j + 1) !~ /(^|[^A-Za-z0-9_])await([^A-Za-z0-9_]|$)/) return 1
+        off = i
+      }
+      return 0
+    }
+    function owned_group(s,   off, i, before, after, word) {
+      word = "MultiThreadedEventLoopGroup"
+      off = 0
+      while ((i = index(substr(s, off + 1), word)) > 0) {
+        i += off
+        before = (i > 1) ? substr(s, i - 1, 1) : ""
+        after = substr(s, i + length(word))
+        if (before !~ /[A-Za-z0-9_]/ && after !~ /^[A-Za-z0-9_]/ && after !~ /^\.singleton([^A-Za-z0-9_]|$)/) return 1
+        off = i
+      }
+      return 0
+    }
+    /^[[:space:]]*\/\// { next }
+    {
+      s = code($0)
+      if (s ~ /syncShutdownGracefully|DispatchSemaphore|DispatchGroup|Thread\.sleep|(^|[^A-Za-z0-9_.])usleep[(]|\.sync[[:space:]]*[{]/ || unawaited_wait(s) || (index(FILENAME, tests) == 1 && owned_group(s)))
+        print FILENAME ":" FNR ": " $0
+    }
+  ' $(swift_files Sources) $(swift_files Tests) 2>/dev/null || true)
+  if [ -z "$hits" ]; then pass "$name"; else fail "$name"; printf '%s\n' "$hits"; fi
+}
+
+# Prohibition. No test or test fixture parks on a raw continuation. A continuation nobody resumes is
+# a wait that task cancellation cannot reach, so when the suite's time limit fires the test stays
+# parked and holds the run open. A test waits through the shared, cancellation-aware types in
+# HTTPTesting instead; those types are where the continuations live, which is why Sources is not
+# scanned. String contents and comments are dropped first.
+check_no_raw_continuations_in_tests() {
+  local name="no raw continuation in Tests"
+  local hits
+  hits=$(awk "$SWIFT_SOURCE_AWK"'
+    /^[[:space:]]*\/\// { next }
+    code($0) ~ /with(Checked|Unsafe)(Throwing)?Continuation/ { print FILENAME ":" FNR ": " $0 }
+  ' $(swift_files Tests) 2>/dev/null || true)
+  if [ -z "$hits" ]; then pass "$name"; else fail "$name"; printf '%s\n' "$hits"; fi
 }
 
 # Prohibition. Local-only files are never force-added. Not self-tested: it reads the real index.
@@ -333,6 +462,9 @@ SELF_TESTABLE=(
   check_swift_testing_only
   check_job_timeouts
   check_suite_time_limit
+  check_socket_suites_serialized
+  check_no_blocking_waits
+  check_no_raw_continuations_in_tests
   check_format
 )
 
@@ -396,13 +528,106 @@ import HTTPTesting
 import Testing
 
 @Suite(
-  "the AsyncHTTPClient transport", .timeLimit(.minutes(suiteTimeLimitMinutes)))
+  "the AsyncHTTPClient transport", .serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
 struct AsyncHTTPClientTransportTests {
   @Test func aRequestReachesTheServer() {
     #expect(true)
   }
 }
 #endif
+EOF
+  # Every socket-backed target holds a suite, so the serialization check has its subject. This one
+  # also carries every spelling the blocking-wait and continuation checks must let through: the
+  # shared event loop group under both names, awaited waits, and the banned names in a string and
+  # in comments.
+  mkdir -p "$d/Tests/WebSocketPortableTests" "$d/Tests/WebSocketURLSessionTests" "$d/Tests/WebSocketHummingbirdTests" "$d/Tests/WebSocketServerInteropTests"
+  cat > "$d/Tests/WebSocketPortableTests/NIOWebSocketTransportTests.swift" <<'EOF'
+import HTTPTesting
+import NIOPosix
+import Testing
+
+@Suite("NIO WebSocket transport", .serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
+struct NIOWebSocketTransportTests {
+  let group = MultiThreadedEventLoopGroup.singleton
+  let shared: any EventLoopGroup = .singletonMultiThreadedEventLoopGroup
+
+  // A fixture never owns a MultiThreadedEventLoopGroup, parks on a DispatchSemaphore, or calls
+  // withCheckedContinuation; it awaits the shared types instead.
+  @Test("A close never blocks on future.wait() or withCheckedContinuation")
+  func aCloseIsAwaited() async throws {
+    let server = RawWebSocketServer()
+    try await server.closed.wait()  // never a DispatchSemaphore or future.wait()
+    for operation in server.sends { try await operation.wait() }
+    do { try await server.accepted.wait() } catch {}
+  }
+}
+EOF
+  cat > "$d/Tests/WebSocketURLSessionTests/URLSessionWebSocketTests.swift" <<'EOF'
+import Dispatch
+import HTTPTesting
+import Testing
+
+@Suite("URLSession WebSockets", .serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
+struct URLSessionWebSocketTests {
+  let queue = DispatchQueue(label: "WebSocketPeer")
+
+  @Test func aMessageArrives() async throws {
+    let latch = Latch()
+    latch.arrive()
+    try await latch.wait(forCount: 1)
+  }
+}
+EOF
+  cat > "$d/Tests/WebSocketHummingbirdTests/HummingbirdWebSocketAdapterTests.swift" <<'EOF'
+import HTTPTesting
+import Testing
+
+@Suite("Hummingbird WebSocket adapter", .serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
+struct HummingbirdWebSocketAdapterTests {
+  @Test func aConnectionIsAccepted() {
+    #expect(true)
+  }
+}
+EOF
+  cat > "$d/Tests/WebSocketServerInteropTests/HummingbirdPortableClientTests.swift" <<'EOF'
+import HTTPTesting
+import Testing
+
+@Suite(.serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
+struct HummingbirdPortableClientTests {
+  @Suite(.serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
+  struct EchoTests {
+    @Test func aMessageEchoes() {
+      #expect(true)
+    }
+  }
+}
+EOF
+  # The transport owns its group; the ban on an owned group covers Tests only.
+  mkdir -p "$d/Sources/WebSocketPortable"
+  cat > "$d/Sources/WebSocketPortable/NIOWebSocketTransport.swift" <<'EOF'
+import NIOPosix
+
+/// A transport that owns its event loop group.
+public final class NIOWebSocketTransport: Sendable {
+  private let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+
+  func close(_ completion: Completion) async throws {
+    try await completion.wait()
+  }
+}
+EOF
+  # The shared wait types are where the continuations live, so the continuation ban skips Sources.
+  cat > "$d/Sources/HTTPTesting/Latch.swift" <<'EOF'
+import Synchronization
+
+package final class Latch: Sendable {
+  package func wait() async {
+    await withCheckedContinuation { continuation in
+      continuation.resume()
+    }
+  }
+}
 EOF
   cat > "$d/Sources/HTTPTesting/StubURLProtocol.swift" <<'EOF'
 #if canImport(Darwin)
@@ -524,6 +749,12 @@ plant_violation() {
       printf 'name: Extra\n\non:\n  push:\n\njobs:\n  stray:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n' > "$d/.github/workflows/extra.yml" ;;
     check_suite_time_limit)
       printf 'import Testing\n\n@Suite struct UnboundedTests {\n  @Test func aTestRuns() {\n    #expect(true)\n  }\n}\n' > "$d/Tests/HTTPCoreTests/UnboundedTests.swift" ;;
+    check_socket_suites_serialized)
+      printf 'import HTTPTesting\nimport Testing\n\n@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct UnserializedTests {\n  @Test func aTestRuns() {\n    #expect(true)\n  }\n}\n' > "$d/Tests/WebSocketPortableTests/UnserializedTests.swift" ;;
+    check_no_blocking_waits)
+      printf 'import Dispatch\n\nlet semaphore = DispatchSemaphore(value: 0)\n' > "$d/Tests/HTTPCoreTests/BlockingTests.swift" ;;
+    check_no_raw_continuations_in_tests)
+      printf 'func parked() async {\n  await withCheckedContinuation { continuation in\n    continuation.resume()\n  }\n}\n' > "$d/Tests/HTTPCoreTests/ParkedTests.swift" ;;
     # A force-unwrap in a suite's helper method, the shape a host formatter of another version can
     # miss. It sits in a helper rather than in the test itself, because the rule does not read a
     # function marked `@Test`.
@@ -547,6 +778,16 @@ plant_second_violation() {
     # see it. The outer suite carries the limit; the inner one does not.
     check_suite_time_limit)
       printf 'import HTTPTesting\nimport Testing\n\n@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct OuterTests {\n  @Suite struct NestedTests {\n    @Test func aTestRuns() {\n      #expect(true)\n    }\n  }\n}\n' > "$d/Tests/HTTPCoreTests/NestedTests.swift" ;;
+    # Naming the trait in the suite's display name is not carrying it.
+    check_socket_suites_serialized)
+      printf 'import HTTPTesting\nimport Testing\n\n@Suite(".serialized", .timeLimit(.minutes(suiteTimeLimitMinutes))) struct NamedTests {\n  @Test func aTestRuns() {\n    #expect(true)\n  }\n}\n' > "$d/Tests/WebSocketURLSessionTests/NamedTests.swift" ;;
+    # A future waited on without `await` blocks the thread until the event loop fulfils it.
+    check_no_blocking_waits)
+      printf 'func bind(_ future: EventLoopFuture<Int>) throws -> Int {\n  let port = try future.wait()\n  return port\n}\n' > "$d/Tests/WebSocketPortableTests/BindTests.swift" ;;
+    # The ban reaches every test target, the shared test support included.
+    check_no_raw_continuations_in_tests)
+      mkdir -p "$d/Tests/WebSocketTestSupport"
+      printf 'package func parked() async throws {\n  try await withUnsafeThrowingContinuation { $0.resume() }\n}\n' > "$d/Tests/WebSocketTestSupport/Gate.swift" ;;
     *) return 1 ;;
   esac
 }
@@ -563,6 +804,12 @@ plant_third_violation() {
     # A suite is still a suite when another attribute precedes it on the line.
     check_suite_time_limit)
       printf 'import Testing\n\n@MainActor @Suite struct PrefixedTests {\n  @Test func aTestRuns() {\n    #expect(true)\n  }\n}\n' > "$d/Tests/HTTPCoreTests/PrefixedTests.swift" ;;
+    # Naming the trait in a trailing comment is not carrying it.
+    check_socket_suites_serialized)
+      printf 'import HTTPTesting\nimport Testing\n\n@Suite(.timeLimit(.minutes(suiteTimeLimitMinutes))) struct CommentedTests {  // .serialized\n  @Test func aTestRuns() {\n    #expect(true)\n  }\n}\n' > "$d/Tests/WebSocketHummingbirdTests/CommentedTests.swift" ;;
+    # A fixture that owns its group spawns threads per fixture and must shut them down.
+    check_no_blocking_waits)
+      printf 'import NIOPosix\n\nfinal class OwnedGroupServer {\n  let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)\n}\n' > "$d/Tests/WebSocketPortableTests/OwnedGroupServer.swift" ;;
     *) return 1 ;;
   esac
 }
@@ -575,6 +822,9 @@ plant_fourth_violation() {
     # Naming the constant in a comment is not carrying the trait.
     check_suite_time_limit)
       printf 'import Testing\n\n@Suite struct CommentedTests {  // suiteTimeLimitMinutes\n  @Test func aTestRuns() {\n    #expect(true)\n  }\n}\n' > "$d/Tests/HTTPCoreTests/CommentedTests.swift" ;;
+    # The blocking ban reaches Sources too: a synchronous hop onto a queue parks the caller's thread.
+    check_no_blocking_waits)
+      printf 'let value = queue.sync { 1 }\n' >> "$d/Sources/HTTPCore/Request.swift" ;;
     *) return 1 ;;
   esac
 }
@@ -587,6 +837,9 @@ plant_fifth_violation() {
     # A test at file scope is in an implicit suite no attribute reaches, so no suite bounds it.
     check_suite_time_limit)
       printf 'import Testing\n\n@Test func aTestAtFileScopeRuns() {\n  #expect(true)\n}\n' > "$d/Tests/HTTPCoreTests/FileScopeTests.swift" ;;
+    # An `await` earlier on the line belongs to its own statement and does not cover a second wait.
+    check_no_blocking_waits)
+      printf 'func bind(_ ready: Latch, _ future: EventLoopFuture<Int>) async throws -> Int {\n  try await ready.wait(forCount: 1); let port = try future.wait()\n  return port\n}\n' > "$d/Tests/WebSocketPortableTests/SecondWaitTests.swift" ;;
     *) return 1 ;;
   esac
 }
@@ -608,14 +861,20 @@ remove_subject() {
       rm -f "$d/Sources/HTTPCore/LoggingObserver.swift" ;;
     check_swift_testing_only)
       printf 'import HTTPCore\n' > "$d/Tests/HTTPCoreTests/RequestTests.swift"
-      printf '#if HTTPPortable\nimport HTTPCore\n#endif\n' > "$d/Tests/HTTPPortableTests/AsyncHTTPClientTransportTests.swift" ;;
+      printf '#if HTTPPortable\nimport HTTPCore\n#endif\n' > "$d/Tests/HTTPPortableTests/AsyncHTTPClientTransportTests.swift"
+      rm -rf "$d"/Tests/WebSocket*Tests ;;
     check_job_timeouts)
       rm -rf "$d/.github" ;;
-    # The tree keeps its test files and loses every suite, so the arm proves the empty derived set
-    # fails on its own rather than on a file-scope test the check also refuses.
+    # The tree keeps its HTTP test files and loses every suite, so the arm proves the empty derived
+    # set fails on its own rather than on a file-scope test the check also refuses. The WebSocket
+    # targets hold nothing but suites, so they go whole.
     check_suite_time_limit)
       printf 'import HTTPCore\nimport Testing\n\nstruct NotASuite {}\n' > "$d/Tests/HTTPCoreTests/RequestTests.swift"
-      printf '#if HTTPPortable\nimport Testing\n\nstruct NotASuite {}\n#endif\n' > "$d/Tests/HTTPPortableTests/AsyncHTTPClientTransportTests.swift" ;;
+      printf '#if HTTPPortable\nimport Testing\n\nstruct NotASuite {}\n#endif\n' > "$d/Tests/HTTPPortableTests/AsyncHTTPClientTransportTests.swift"
+      rm -rf "$d"/Tests/WebSocket*Tests ;;
+    # One socket-backed target gone is enough: each directory in the list must hold a suite.
+    check_socket_suites_serialized)
+      rm -rf "$d/Tests/WebSocketServerInteropTests" ;;
     *) return 1 ;;
   esac
 }
