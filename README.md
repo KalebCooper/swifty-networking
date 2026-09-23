@@ -346,7 +346,9 @@ only with `TransportError`, and each decoder reads one directly; a line, a field
 across two chunks decodes intact. Every transport streams: `Transport` requires one method,
 `stream(_:body:options:)`, and `send(_:body:options:)` defaults to draining it. A status outside
 `2xx` throws `TransportError.httpStatus` carrying the first 64 KiB of the body, so an error envelope
-is readable from a stream without a second request. Server-Sent Events:
+is readable from a stream without a second request. `streamResponse(_:)` returns the same body
+behind a `StreamedResponse` that settles the status and header fields before the first chunk, for a
+receipt like `ETag` or `Content-Length` on a large download. Server-Sent Events:
 
 ```swift
 let body = try await client.stream(Request(path: "/events"))
@@ -710,7 +712,7 @@ rebuilt from `main` on every push to it. Nine articles accompany it:
 | [Request Policies](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/requestpolicies/) | Deadlines, retries and `Retry-After`, redirects, and coalescing |
 | [Concurrency Posture](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/concurrencyposture/) | How the package uses isolation, shared state, and typed throws |
 | [The Error Model](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/errormodel/) | `TransportError`, its cases, and decoding a server's error envelope |
-| [Streaming a Response](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/streaming/) | `stream(_:)`, `LineSplitter`, `NDJSONDecoder`, `SSEDecoder`, and `EventSource` |
+| [Streaming a Response](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/streaming/) | `stream(_:)`, `streamResponse(_:)`, `LineSplitter`, `NDJSONDecoder`, `SSEDecoder`, and `EventSource` |
 | [Paginating a Response](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/paginating/) | `pages(_:as:next:)`, following a `Link` header or a body cursor, and `WebLink` |
 | [Testing](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/testing/) | `MockTransport`, `RecordingClock`, `RecordingObserver`, and `StubURLProtocol` |
 | [Bridging Observable State to Request Replay](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/observations/) | Driving a request from an `@Observable` model with `Observations` |

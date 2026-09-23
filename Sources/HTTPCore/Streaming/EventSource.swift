@@ -197,7 +197,7 @@ public struct EventSource: AsyncSequence, Sendable {
 
       let response: StreamedResponse
       do throws(TransportError) {
-        response = try await source.client.openStream(request)
+        response = try await source.client.streamResponse(request)
       } catch {
         try settle(error)
         return

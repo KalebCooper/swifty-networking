@@ -93,7 +93,8 @@ import HTTPTypes
 /// arriving. Every transport streams, because ``Transport/stream(_:body:options:)`` is the
 /// protocol's one requirement, and the client calls it directly.
 /// ``events(_:maxLineLength:reconnectDelay:)`` reads a `text/event-stream` through it and
-/// reconnects with `Last-Event-ID` when the stream ends. See <doc:Streaming>.
+/// reconnects with `Last-Event-ID` when the stream ends. For the status and header fields too, use
+/// ``streamResponse(_:)``. See <doc:Streaming>.
 ///
 /// ```swift
 /// let body = try await client.stream(Request(path: "/events"))
@@ -1175,7 +1176,7 @@ public struct HTTPClient: Sendable {
   /// sequence means the server accepted the request. Everything after that is the body, a chunk at
   /// a time, as a ``StreamedBody`` you can store or hand on without naming the transport's own
   /// sequence. Read it once, from one task: an `AsyncSequence` iterator is in exclusive use by
-  /// whoever is reading it.
+  /// whoever is reading it. For the status and header fields too, use ``streamResponse(_:)``.
   ///
   /// Every transport streams: ``Transport/stream(_:body:options:)`` is the protocol's one
   /// requirement, and this method calls it directly on ``transport``.
@@ -1241,7 +1242,7 @@ public struct HTTPClient: Sendable {
   ///   at any point up to and including that read, and whatever the transport or the body encoder
   ///   threw. A failure after the sequence is returned surfaces from the sequence itself.
   public func stream(_ request: Request) async throws(TransportError) -> StreamedBody {
-    try await openStream(request).body
+    try await streamResponse(request).body
   }
 
   /// Returns a sequence of server-sent events that reconnects when the stream ends or fails,
@@ -1356,16 +1357,31 @@ public struct HTTPClient: Sendable {
     PageSequence(client: self, decode: decode, next: next, request: request)
   }
 
-  /// Sends the request and returns its successful response with the body still arriving.
+  /// Sends the request and returns its successful response with the status and header fields
+  /// settled and the body still arriving.
   ///
-  /// This is ``stream(_:)`` with the status and the header fields kept: ``stream(_:)`` returns the
-  /// body alone, and ``EventSource`` needs the status to tell a `204` from a stream to read.
+  /// The status and the header fields answer before any chunk of the body does, so receiving this
+  /// value already means the server accepted the request, and its status and fields are the
+  /// receipt a caller streaming a large download needs, such as `ETag` or `Content-Length`.
+  /// ``StreamedResponse/body`` is the same ``StreamedBody`` that ``stream(_:)`` returns: read it
+  /// once, from one task, a chunk at a time, so memory stays bounded to whatever chunk is in hand
+  /// rather than the whole response. Use ``stream(_:)`` when the body alone is enough.
+  ///
+  /// ```swift
+  /// let response = try await client.streamResponse(Request(path: "/export.jsonl"))
+  /// let expectedLength = response.headers[.contentLength]
+  /// for try await chunk in response.body { handle(chunk) }
+  /// ```
+  ///
+  /// Shares every policy ``stream(_:)`` documents: no retry, no coalescing, no deadline on the
+  /// read, and the same ``TransportError/httpStatus(body:code:headers:)`` for a status outside
+  /// `2xx`. See ``stream(_:)`` and <doc:Streaming>.
   ///
   /// - Parameter request: The request, relative to ``baseURL``.
   /// - Returns: The successful response, its status and header fields settled and its body as
   ///   chunks.
   /// - Throws: What ``stream(_:)`` throws.
-  func openStream(_ request: Request) async throws(TransportError) -> StreamedResponse {
+  public func streamResponse(_ request: Request) async throws(TransportError) -> StreamedResponse {
     let resolved = try resolve(request, to: .base)
     let response = try await exchange(
       resolved, number: 1, redirects: request.options.redirectPolicy ?? redirectPolicy,

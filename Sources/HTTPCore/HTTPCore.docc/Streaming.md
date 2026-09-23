@@ -113,8 +113,9 @@ above is the whole of one.
 
 Nothing reports progress. A reader knows how many bytes it has taken, having taken them, and the
 expected total is a response header field: ``Transport/stream(_:body:options:)`` answers with a
-``StreamedResponse`` carrying the complete fields, while ``HTTPClient/stream(_:)`` returns the body
-alone. The sending direction has no such count. A large upload goes out as
+``StreamedResponse`` carrying the complete fields; ``HTTPClient/streamResponse(_:)`` hands that same
+value back to you, while ``HTTPClient/stream(_:)`` returns its body alone. The sending direction has
+no such count. A large upload goes out as
 ``RequestBody/file(_:contentType:)``, whose bytes the transport reads from disk as it sends, and a
 ``MultipartForm`` encodes in memory before the send begins; neither offers a point at which the
 bytes already written can be observed. A body supplied as a stream, which is what upload progress

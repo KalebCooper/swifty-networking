@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `HTTPClient.streamResponse(_:)` returns a streamed response's status and header fields settled
+  before the first chunk, a receipt `stream(_:)` alone cannot give a caller of a large download.
 - `HTTPClient.pages(_:as:decode:next:)`, `PageSequence.decode`, and
   `PageSequence.init(client:decode:next:request:)` let a page decode with a decode closure you
   supply instead of `HTTPClient`'s own `JSONDecoder`, for a body that is not JSON or a `Value` that

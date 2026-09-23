@@ -625,4 +625,66 @@ struct HTTPClientStreamingTests {
     #expect(isCancelled(try #require(await reader.value)))
     #expect(transport.requests.count == 1)
   }
+
+  @Test(
+    "Stream response returns the status and header fields with the body unread, then the chunks in order"
+  )
+  func streamResponseReturnsStatusAndFieldsWithTheBodyUnreadThenTheChunksInOrder() async throws {
+    let sent = Array("hello world".utf8)
+    let transport = MockTransport(answers: [
+      .success(
+        MockTransport.Answer(
+          chunks: [Data("hello world".utf8)],
+          headers: [.contentType: "text/plain", .eTag: "\"r1\""],
+          status: .ok))
+    ])
+    let client = makeClient(transport: transport)
+
+    let response = try await client.streamResponse(request)
+
+    #expect(response.status == .ok)
+    #expect(response.headers[.eTag] == "\"r1\"")
+    #expect(response.headers[.contentType] == "text/plain")
+    #expect(try await collect(response.body) == sent)
+  }
+
+  @Test("a status outside 2xx throws httpStatus with the error body, exactly as stream(_:)")
+  func streamResponseFailedStatusThrowsWithTheErrorBody() async throws {
+    let transport = MockTransport(answers: [
+      .success(
+        MockTransport.Answer(
+          chunks: [Data(#"{"error":"#.utf8), Data(#""nope"}"#.utf8)],
+          headers: [.contentType: "application/json"],
+          status: .notFound))
+    ])
+    let client = makeClient(transport: transport)
+
+    let error = try #require(await failure(of: { try await client.streamResponse(request) }))
+
+    let status = try #require(httpStatus(error))
+    #expect(status.code == 404)
+    #expect(status.body == Data(#"{"error":"nope"}"#.utf8))
+    #expect(status.headers[.contentType] == "application/json")
+  }
+
+  @Test(
+    "reading a streamResponse(_:) body to its end reports one body event with the bytes delivered and no failure"
+  )
+  func streamResponseBodyReadToTheEndReportsOneEvent() async throws {
+    let observer = RecordingObserver()
+    let transport = MockTransport(answers: [
+      .success(
+        MockTransport.Answer(chunks: [Data("ab".utf8), Data("cde".utf8), Data("f".utf8)]))
+    ])
+    let client = makeClient(observer: observer, transport: transport)
+
+    let response = try await client.streamResponse(request)
+    _ = try await collect(response.body)
+
+    #expect(kinds(observer.events) == ["sent", "received", "finishedBody"])
+    let end = try #require(finishedBodies(observer.events).first)
+    #expect(end.bytesReceived == 6)
+    #expect(end.correlationID == "cid")
+    #expect(end.failure == nil)
+  }
 }
