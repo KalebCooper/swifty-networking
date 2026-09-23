@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 1.2.0 - 2026-09-22
+
 ### Fixed
 
 - `StubURLProtocol` and `StubURLProtocolFailure` are unavailable on watchOS. watchOS does not

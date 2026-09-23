@@ -10,7 +10,7 @@ A Swift networking package built on Swift concurrency. Build one client, describ
 back a decoded value, a raw response, or a stream of bytes, with a single typed error to handle and
 test support included.
 
-The unreleased WebSocket products provide an injected client, explicit connection ownership, bounded
+The WebSocket products provide an injected client, explicit connection ownership, bounded
 receiving and sending, synchronous submission, shared send completion and graceful close. Apple has a
 URLSession client, tested on macOS, the iOS simulator, Mac Catalyst and the watchOS simulator. The
 opt-in NIO client is tested on Linux, macOS and the iOS simulator, with beta Android support. The
@@ -71,7 +71,7 @@ more to the same initializer, and none of them changes how a request is written.
 ## Installation
 
 ```swift
-.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.1.0")
+.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.2.0")
 ```
 
 Add `HTTPCore` to any target that builds requests, `HTTPURLSession` to the one that sends them on Apple
@@ -79,7 +79,7 @@ platforms, `HTTPPortable` to the one that sends them on Linux and on Android, an
 test targets. `HTTPPortable` is behind a trait of the same name, so enable it on the dependency:
 
 ```swift
-.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.1.0",
+.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.2.0",
          traits: ["HTTPPortable"])
 ```
 
@@ -698,7 +698,7 @@ rebuilt from `main` on every push to it. Nine articles accompany it:
 | [Bridging Observable State to Request Replay](https://kalebcooper.github.io/swifty-networking/documentation/httpcore/observations/) | Driving a request from an `@Observable` model with `Observations` |
 
 The [WebSocketCore reference](Sources/WebSocketCore/WebSocketCore.docc/WebSocketCore.md)
-describes the unreleased connection API, backend contract and current limits. The
+describes the connection API, backend contract and current limits. The
 [WebSocketHummingbird guide](Sources/WebSocketHummingbird/WebSocketHummingbird.docc/WebSocketHummingbird.md)
 shows the accepted server connection scope and upgrade configuration. The
 [WebSocketURLSession guide](Sources/WebSocketURLSession/WebSocketURLSession.docc/WebSocketURLSession.md)
