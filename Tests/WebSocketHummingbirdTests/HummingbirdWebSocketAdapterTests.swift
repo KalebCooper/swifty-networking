@@ -208,6 +208,39 @@ struct HummingbirdWebSocketAdapterTests {
     }
   }
 
+  @Test("A later peer close frame never replaces the first close frame's metadata")
+  func firstPeerCloseWins() async throws {
+    let adapter = try HummingbirdWebSocketAdapter()
+    let captured = WebSocketCompletion<WebSocketClose>()
+    let app = Application(
+      router: Router(),
+      server: .http1WebSocketUpgrade(configuration: .init(ws: adapter.configuration)) {
+        _, channel, _ in
+        let scope = try await adapter.prepare(channel: channel)
+        return .upgrade([:]) { inbound, outbound, _ in
+          try await scope.withConnection(inbound: inbound, outbound: outbound) { socket in
+            for try await _ in socket.messages {}
+            captured.finish(.success(socket.closeInfo ?? WebSocketClose()))
+          }
+        }
+      },
+      configuration: .init(address: .hostname("localhost", port: 0)))
+    try await app.test(.live) { client in
+      // A client that closes with a raw frame still echoes the server's close reply with 1000.
+      // Sending that second close back to back puts it ahead of the server's own close reply.
+      _ = try await client.ws("/") { inbound, outbound, _ in
+        try await outbound.write(
+          .custom(.init(fin: true, opcode: .connectionClose, data: .init())))
+        try await outbound.write(
+          .custom(.init(fin: true, opcode: .connectionClose, data: .init(bytes: [0x03, 0xE8]))))
+        for try await _ in inbound {}
+      }
+      let close = try await captured.wait()
+      #expect(close.code == nil)
+      #expect(close.reason == nil)
+    }
+  }
+
   @Test("Ping waits for a correlated pong while the accepted reader runs")
   func ping() async throws {
     let adapter = try HummingbirdWebSocketAdapter()

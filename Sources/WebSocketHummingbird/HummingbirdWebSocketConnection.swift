@@ -18,6 +18,7 @@ final class HummingbirdWebSocketConnection: WebSocketBufferedConnection {
     var close: WebSocketClose?
     var failed = false
     var fragmentedBytes: Int?
+    var peerClosed = false
     var ping: (UInt64, WebSocketCompletion<Void>)?
     var sequence: UInt64 = 0
     var started = false
@@ -139,7 +140,13 @@ final class HummingbirdWebSocketConnection: WebSocketBufferedConnection {
       let reason =
         bytes.readableBytes == 0
         ? nil : String(bytes: bytes.readableBytesView, encoding: .utf8)
-      state.withLock { state in state.close = WebSocketClose(code: code, reason: reason) }
+      // The first close frame the peer sends is the connection's close; a peer that closed with a
+      // raw frame still echoes the server's reply, and that echo must not replace it.
+      state.withLock { state in
+        guard !state.peerClosed else { return }
+        state.peerClosed = true
+        state.close = WebSocketClose(code: code, reason: reason)
+      }
     case .pong:
       var bytes = frame.unmaskedData
       guard let sequence: UInt64 = bytes.readInteger(), bytes.readableBytes == 0 else {

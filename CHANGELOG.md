@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Fixed
+
+- A socket accepted by `HummingbirdWebSocketAdapter` now keeps the first close frame its peer sends
+  as its close metadata. A peer that closed with a raw frame, including an empty one, echoes the
+  server's close reply with 1000, and that echo could replace the peer's actual close code.
+
 ## 1.3.0 - 2026-09-23
 
 ### Added
