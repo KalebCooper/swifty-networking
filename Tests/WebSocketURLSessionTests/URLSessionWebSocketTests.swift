@@ -6,7 +6,6 @@ import WebSocketCore
 @testable import WebSocketURLSession
 
 @Suite("URLSession WebSockets", .serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
-@MainActor
 struct URLSessionWebSocketTests {
   @Test("Abrupt EOF fails rather than inventing close metadata")
   func abruptEOF() async throws {

@@ -6,7 +6,6 @@ import WebSocketCore
 @testable import WebSocketURLSession
 
 @Suite("URLSession WebSocket TLS", .serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
-@MainActor
 struct URLSessionWebSocketTLSTests {
   @Test("Cancelling during TLS stops a pending connection")
   func cancelledHandshake() async throws {
@@ -28,12 +27,13 @@ struct URLSessionWebSocketTLSTests {
 
   @Test("A trusted local CA still rejects the wrong hostname")
   func hostnameMismatch() async throws {
-    let server = try WebSocketServer(identity: AppleTLSFixture.identity()) { peer, request in
+    let server = try AppleTLSFixture.server { peer, request in
       try await peer.upgrade(request)
     }
     defer { server.stop() }
     let client = WebSocketClient(
-      transport: URLSessionWebSocketTransport(testTrustAnchor: try AppleTLSFixture.certificate()))
+      transport: URLSessionWebSocketTransport(
+        testTrustAnchor: try AppleTLSFixture.certificate.get()))
     await #expect { try await client.connect(to: server.url()) } throws: {
       ($0 as? WebSocketError)?.kind == .handshakeRejected
     }
@@ -42,13 +42,14 @@ struct URLSessionWebSocketTLSTests {
 
   @Test("A trusted local CA completes a WSS upgrade and message exchange")
   func trustedCA() async throws {
-    let server = try WebSocketServer(identity: AppleTLSFixture.identity()) { peer, request in
+    let server = try AppleTLSFixture.server { peer, request in
       try await peer.upgrade(request, frames: [0x81, 2, 111, 107])
       _ = try await peer.frame()
     }
     defer { server.stop() }
     let client = WebSocketClient(
-      transport: URLSessionWebSocketTransport(testTrustAnchor: try AppleTLSFixture.certificate()))
+      transport: URLSessionWebSocketTransport(
+        testTrustAnchor: try AppleTLSFixture.certificate.get()))
     let socket = try await client.connect(to: server.url(host: "localhost"))
     defer { socket.cancel() }
     var messages = socket.messages.makeAsyncIterator()
@@ -58,7 +59,7 @@ struct URLSessionWebSocketTLSTests {
 
   @Test("An untrusted local CA is rejected by the public transport")
   func untrustedCA() async throws {
-    let server = try WebSocketServer(identity: AppleTLSFixture.identity()) { peer, request in
+    let server = try AppleTLSFixture.server { peer, request in
       try await peer.upgrade(request)
     }
     defer { server.stop() }

@@ -7,7 +7,6 @@ import WebSocketTestSupport
 @testable import WebSocketURLSession
 
 @Suite("URLSession WebSocket lifetime", .serialized, .timeLimit(.minutes(suiteTimeLimitMinutes)))
-@MainActor
 struct URLSessionWebSocketLifecycleTests {
   @Test("A cancelled reader releases its claim and preserves later messages")
   func cancelledReader() async throws {
@@ -22,7 +21,7 @@ struct URLSessionWebSocketLifecycleTests {
     let socket = try await WebSocketClient(transport: URLSessionWebSocketTransport())
       .connect(to: server.url())
     defer { socket.cancel() }
-    let waiting = Task.immediate { @MainActor in
+    let waiting = Task.immediate {
       var iterator = socket.messages.makeAsyncIterator()
       return try await iterator.next()
     }
@@ -137,7 +136,7 @@ struct URLSessionWebSocketLifecycleTests {
       ($0 as? WebSocketError)?.kind == .cancelled
     }
     var reader = socket.messages.makeAsyncIterator()
-    let reading = Task.immediate { @MainActor in try await reader.next() }
+    let reading = Task.immediate { try await reader.next() }
     clock.underlying.advance(by: .seconds(10))
     await #expect { try await reading.value } throws: { ($0 as? WebSocketError)?.kind == .timedOut }
   }
