@@ -71,7 +71,7 @@ more to the same initializer, and none of them changes how a request is written.
 ## Installation
 
 ```swift
-.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.2.0")
+.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.3.0")
 ```
 
 Add `HTTPCore` to any target that builds requests, `HTTPURLSession` to the one that sends them on Apple
@@ -79,7 +79,7 @@ platforms, `HTTPPortable` to the one that sends them on Linux and on Android, an
 test targets. `HTTPPortable` is behind a trait of the same name, so enable it on the dependency:
 
 ```swift
-.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.2.0",
+.package(url: "https://github.com/KalebCooper/swifty-networking.git", from: "1.3.0",
          traits: ["HTTPPortable"])
 ```
 

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 1.3.0 - 2026-09-23
+
 ### Added
 
 - `HTTPClient.streamResponse(_:)` returns a streamed response's status and header fields settled
