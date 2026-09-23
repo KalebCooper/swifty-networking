@@ -1,9 +1,10 @@
 /// A sequence of decoded pages, each fetched after the one before it by a rule you supply.
 ///
-/// ``HTTPClient/pages(_:as:next:)`` makes one. Nothing is sent until the sequence is read. Each read
-/// sends one request through ``client``, decodes the successful body with
-/// ``HTTPClient/decoder``, asks ``next`` where the following page lives, and then returns the page.
-/// When ``next`` answers `nil`, the page just returned is the last one.
+/// ``HTTPClient/pages(_:as:next:)`` makes one, and ``HTTPClient/pages(_:as:decode:next:)`` makes one
+/// with a decode closure you supply. Nothing is sent until the sequence is read. Each read
+/// sends one request through ``client``, reads the successful response as a `Value` with
+/// ``decode``, asks ``next`` where the following page lives, and then returns the page. When
+/// ``next`` answers `nil`, the page just returned is the last one.
 ///
 /// ```swift
 /// let issues = client.pages(Request(path: "/repos/o/r/issues"), as: [Issue].self) { page, _ in
@@ -30,6 +31,31 @@
 /// page return, and the next read throws ``TransportError/transport(kind:underlying:)`` with
 /// ``TransportFailureKind/badURL``.
 ///
+/// ## Decoding
+///
+/// ``decode`` reads each page's successful response as a `Value`. The JSON initializer below sets
+/// it to decode JSON with ``HTTPClient/decoder``; a source whose pages are not JSON, or whose
+/// `Value` is not `Decodable`, supplies its own:
+///
+/// ```swift
+/// let manifests = client.pages(
+///   Request(path: "/manifests"),
+///   as: Manifest.self,
+///   decode: { response in try ManifestCodec.decode(response.body) }
+/// ) { page, request in
+///   page.value.nextMarker.map { marker in
+///     var next = request
+///     next.query = [QueryItem(name: "marker", value: marker)]
+///     return .request(next)
+///   }
+/// }
+/// ```
+///
+/// ``decode`` runs once per page, inside the read that fetched it, over the whole response used for
+/// that page: its ``Response/body``, ``Response/headers``, and ``Response/status``. A wrapper that
+/// keeps the bytes alongside the decoded value returns them from inside the closure; the response is
+/// not read a second time.
+///
 /// A page on another origin goes without `Authorization`, `Cookie`, `Proxy-Authorization`, and the
 /// field ``HTTPClient/authentication``'s scheme writes into, whether you set the field yourself,
 /// set it in ``HTTPClient/defaultHeaders``, or the client attached it. Every other header field
@@ -48,7 +74,7 @@
 /// There is no page limit; stop reading when you have enough. A ``NextPage/link(_:)`` that resolves
 /// to the current page's URL fetches that page again. A consumer whose task is cancelled
 /// sees ``TransportError/cancelled`` from its next read, and no page is fetched on a cancelled task.
-public struct PageSequence<Value: Decodable & SendableMetatype>: AsyncSequence, Sendable {
+public struct PageSequence<Value>: AsyncSequence, Sendable {
   /// One decoded page, with the header fields and status it arrived with.
   public typealias Element = DecodedResponse<Value>
   /// The only error a read can throw.
@@ -56,6 +82,14 @@ public struct PageSequence<Value: Decodable & SendableMetatype>: AsyncSequence, 
 
   /// The client every page is fetched through.
   public let client: HTTPClient
+
+  /// How a page's successful response reads as a `Value`.
+  ///
+  /// It runs once per page, inside the read that fetched it, and receives the whole response: the
+  /// body, header fields, and status the page arrived with. A non-success response never reaches it.
+  /// A ``TransportError`` it throws ends the sequence as thrown; any other error ends it as
+  /// ``TransportError/decode(underlying:)``.
+  public let decode: @Sendable (Response) async throws -> Value
 
   /// Where the page after a given one lives, or `nil` when that page is the last.
   ///
@@ -68,28 +102,37 @@ public struct PageSequence<Value: Decodable & SendableMetatype>: AsyncSequence, 
   /// The request for the first page, relative to the client's base URL.
   public let request: Request
 
-  /// Creates a sequence that fetches `request` through `client`, then each page `next` names.
+  /// Creates a sequence that fetches `request` through `client`, reads each page with `decode`, and
+  /// then fetches each page `next` names.
   ///
   /// ```swift
-  /// let items = PageSequence<ItemPage>(client: client, next: { page, request in
-  ///   page.value.nextCursor.map { cursor in
-  ///     var next = request
-  ///     next.query = [QueryItem(name: "cursor", value: cursor)]
-  ///     return .request(next)
-  ///   }
-  /// }, request: Request(path: "/items"))
+  /// let manifests = PageSequence<Manifest>(
+  ///   client: client,
+  ///   decode: { response in try ManifestCodec.decode(response.body) },
+  ///   next: { page, request in
+  ///     page.value.nextMarker.map { marker in
+  ///       var next = request
+  ///       next.query = [QueryItem(name: "marker", value: marker)]
+  ///       return .request(next)
+  ///     }
+  ///   },
+  ///   request: Request(path: "/manifests")
+  /// )
   /// ```
   ///
   /// - Parameters:
   ///   - client: The client every page is fetched through.
+  ///   - decode: How a page's successful response reads as a `Value`.
   ///   - next: Where the page after a given one lives, or `nil` when that page is the last.
   ///   - request: The request for the first page.
   public init(
     client: HTTPClient,
+    decode: @escaping @Sendable (Response) async throws -> Value,
     next: @escaping @Sendable (DecodedResponse<Value>, Request) -> NextPage?,
     request: Request
   ) {
     self.client = client
+    self.decode = decode
     self.next = next
     self.request = request
   }
@@ -123,7 +166,8 @@ public struct PageSequence<Value: Decodable & SendableMetatype>: AsyncSequence, 
     /// The next page.
     ///
     /// - Throws: ``TransportError/cancelled`` when the reading task is cancelled;
-    ///   ``TransportError/decode(underlying:)`` when a body is not a `Value`;
+    ///   ``TransportError/decode(underlying:)`` when ``PageSequence/decode`` throws an error that is
+    ///   not a ``TransportError``, and a ``TransportError`` it throws as it is;
     ///   ``TransportError/transport(kind:underlying:)`` with ``TransportFailureKind/badURL`` for a
     ///   link that does not resolve to an absolute URL; and whatever ``HTTPClient/execute(_:)->R``
     ///   throws for the page's request.
@@ -140,7 +184,7 @@ public struct PageSequence<Value: Decodable & SendableMetatype>: AsyncSequence, 
       let url: String
       do throws(TransportError) {
         let delivery = try await sequence.client.perform(request, to: destination)
-        let value: Value = try await delivery.answer.decode(with: sequence.client.decoder)
+        let value = try await decoded(delivery.answer)
         page = DecodedResponse(
           headers: delivery.answer.headers, status: delivery.answer.status, value: value)
         url = delivery.url
@@ -154,6 +198,22 @@ public struct PageSequence<Value: Decodable & SendableMetatype>: AsyncSequence, 
       produced.options.coalescingKey = nil
       pending = following(sequence.next(page, produced), after: produced, from: url)
       return page
+    }
+
+    /// The page's value, read by the sequence's decode closure.
+    ///
+    /// - Parameter response: The page's successful response.
+    /// - Returns: The decoded value.
+    /// - Throws: A ``TransportError`` the closure throws, unchanged; any other error as
+    ///   ``TransportError/decode(underlying:)``.
+    private func decoded(_ response: Response) async throws(TransportError) -> Value {
+      do {
+        return try await sequence.decode(response)
+      } catch let error as TransportError {
+        throw error
+      } catch {
+        throw .decode(underlying: error)
+      }
     }
 
     /// The request that fetches what `nextPage` names and where it goes, or `nil` when it names
@@ -187,5 +247,40 @@ public struct PageSequence<Value: Decodable & SendableMetatype>: AsyncSequence, 
         return (.base, derived)
       }
     }
+  }
+}
+
+extension PageSequence where Value: Decodable & SendableMetatype {
+  /// Creates a sequence that fetches `request` through `client`, decodes each page's body as JSON
+  /// with ``HTTPClient/decoder``, and then fetches each page `next` names.
+  ///
+  /// Each page decodes as ``Response/decode(_:with:)`` decodes it: a body at or below 16 KiB where the
+  /// reader runs, a larger one on the concurrent executor.
+  ///
+  /// ```swift
+  /// let items = PageSequence<ItemPage>(client: client, next: { page, request in
+  ///   page.value.nextCursor.map { cursor in
+  ///     var next = request
+  ///     next.query = [QueryItem(name: "cursor", value: cursor)]
+  ///     return .request(next)
+  ///   }
+  /// }, request: Request(path: "/items"))
+  /// ```
+  ///
+  /// - Parameters:
+  ///   - client: The client every page is fetched through.
+  ///   - next: Where the page after a given one lives, or `nil` when that page is the last.
+  ///   - request: The request for the first page.
+  public init(
+    client: HTTPClient,
+    next: @escaping @Sendable (DecodedResponse<Value>, Request) -> NextPage?,
+    request: Request
+  ) {
+    self.init(
+      client: client,
+      decode: { response in try await response.decode(Value.self, with: client.decoder) },
+      next: next,
+      request: request
+    )
   }
 }

@@ -56,7 +56,7 @@ more to the same initializer, and none of them changes how a request is written.
   waiting the server's `retry` on the client's clock.
 - Pagination as `AsyncSequence`: `pages(_:as:next:)` returns a `PageSequence` that follows a `Link`
   header field, read with `WebLink`, or a cursor from the body, each page its own request through
-  the whole client.
+  the whole client; `pages(_:as:decode:next:)` takes a decoder you supply for a body that is not JSON.
 - A file body, `RequestBody.file`, that the transport reads from disk as it sends, a form body,
   `RequestBody.form`, encoded from the same `QueryItem` values a query is built from, a
   `multipart/form-data` body, `RequestBody.multipart`, built part by part from text fields and
@@ -213,6 +213,24 @@ for try await page in issues {
 Nothing is sent until the sequence is read, `nil` from the rule ends it, and there is no page
 limit. Each page is its own request through the whole pipeline: its own retries, deadline,
 redirects, and credential rules.
+
+`pages(_:as:decode:next:)` takes a `decode` closure in place of `HTTPClient`'s own `JSONDecoder`,
+for a body that is not JSON or a `Value` that is not `Decodable`; the closure sees the whole
+response used for that page, so a wrapper that also keeps the bytes returns them from inside it.
+
+```swift
+let manifests = client.pages(
+  Request(path: "/manifests"),
+  as: Manifest.self,
+  decode: { response in try ManifestCodec.decode(response.body) }
+) { page, request in
+  page.value.nextMarker.map { marker in
+    var next = request
+    next.query = [QueryItem(name: "marker", value: marker)]
+    return .request(next)
+  }
+}
+```
 
 ### Authenticating with refresh
 

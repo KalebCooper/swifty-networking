@@ -39,6 +39,34 @@ let items = client.pages(Request(path: "/items"), as: ItemPage.self) { page, req
 `next` receives the request that produced the page, with ``RequestOptions/coalescingKey`` already
 cleared (see Coalescing below), so a derived request is a copy of it with one field changed.
 
+## Decoding a Page Yourself
+
+``HTTPClient/pages(_:as:decode:next:)`` is the same sequence with a decoder you supply, for a page
+body that is not JSON or a `Value` that is not `Decodable`:
+
+```swift
+let manifests = client.pages(
+  Request(path: "/manifests"),
+  as: Manifest.self,
+  decode: { response in try ManifestCodec.decode(response.body) }
+) { page, request in
+  page.value.nextMarker.map { marker in
+    var next = request
+    next.query = [QueryItem(name: "marker", value: marker)]
+    return .request(next)
+  }
+}
+```
+
+``HTTPClient/pages(_:as:next:)`` behaves as this overload with `decode` reading JSON through
+``HTTPClient/decoder``; it requires `Value` to be `Decodable` with a `Sendable` metatype.
+
+## Keeping the Bytes
+
+`decode` receives the whole response used for that page, the same one already buffered to decode
+it, so a wrapper returned from inside the closure keeps the bytes alongside the decoded value with
+no second request and no extra buffering.
+
 ## Following a Link
 
 A ``NextPage/link(_:)`` is a URI reference, resolved the way RFC 3986 resolves a relative reference,

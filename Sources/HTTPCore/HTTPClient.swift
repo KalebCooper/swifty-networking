@@ -108,6 +108,8 @@ import HTTPTypes
 /// ``pages(_:as:next:)`` returns a ``PageSequence`` that fetches a first page and then each page a
 /// rule you supply names, as a ``NextPage``: a URI reference such as a `Link` target, or a request
 /// carrying a cursor. Each page is its own logical request through the whole pipeline.
+/// ``pages(_:as:decode:next:)`` is the same sequence with a decoder you supply, for a page body that
+/// is not JSON or a `Value` that is not `Decodable`.
 ///
 /// ```swift
 /// let items = client.pages(Request(path: "/items"), as: ItemPage.self) { page, request in
@@ -1306,6 +1308,52 @@ public struct HTTPClient: Sendable {
     next: @escaping @Sendable (DecodedResponse<Value>, Request) -> NextPage?
   ) -> PageSequence<Value> {
     PageSequence(client: self, next: next, request: request)
+  }
+
+  /// Returns a sequence of decoded pages that starts with `request`, decodes each page's successful
+  /// response with `decode`, and follows `next` from each page to the one after it.
+  ///
+  /// Nothing is sent until the sequence is read. Each page's successful response is handed to
+  /// `decode` before it is handed to `next` with the request that produced it; `nil` from `next`
+  /// makes that page the last. See ``PageSequence`` for how a ``NextPage`` is fetched and when the
+  /// sequence ends, and ``PageSequence/decode`` for what `decode` receives.
+  ///
+  /// ```swift
+  /// let manifests = client.pages(
+  ///   Request(path: "/manifests"),
+  ///   as: Manifest.self,
+  ///   decode: { response in try ManifestCodec.decode(response.body) }
+  /// ) { page, request in
+  ///   page.value.nextMarker.map { marker in
+  ///     var next = request
+  ///     next.query = [QueryItem(name: "marker", value: marker)]
+  ///     return .request(next)
+  ///   }
+  /// }
+  ///
+  /// for try await page in manifests {
+  ///   handle(page.value)
+  /// }
+  /// ```
+  ///
+  /// `Value` need not be `Decodable`, `Sendable`, or have a `Sendable` metatype: use
+  /// ``pages(_:as:next:)`` when `Value` is `Decodable`, its metatype is `Sendable`, and the client's
+  /// own ``decoder`` is enough.
+  ///
+  /// - Parameters:
+  ///   - request: The request for the first page, relative to ``baseURL``.
+  ///   - type: The type each page's body decodes as; inferred from `decode` when you leave it out.
+  ///   - decode: How a page's successful response reads as a `Value`.
+  ///   - next: Where the page after a given one lives, or `nil` when that page is the last. It
+  ///     receives the request with ``RequestOptions/coalescingKey`` cleared.
+  /// - Returns: The pages, as a ``PageSequence``.
+  public func pages<Value>(
+    _ request: Request,
+    as type: Value.Type = Value.self,
+    decode: @escaping @Sendable (Response) async throws -> Value,
+    next: @escaping @Sendable (DecodedResponse<Value>, Request) -> NextPage?
+  ) -> PageSequence<Value> {
+    PageSequence(client: self, decode: decode, next: next, request: request)
   }
 
   /// Sends the request and returns its successful response with the body still arriving.

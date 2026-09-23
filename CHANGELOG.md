@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Added
+
+- `HTTPClient.pages(_:as:decode:next:)`, `PageSequence.decode`, and
+  `PageSequence.init(client:decode:next:request:)` let a page decode with a decode closure you
+  supply instead of `HTTPClient`'s own `JSONDecoder`, for a body that is not JSON or a `Value` that
+  is not `Decodable`. `PageSequence<Value>`'s bound widens from `Decodable & SendableMetatype` to
+  none; the JSON initializer and `pages(_:as:next:)` keep that bound.
+
 ## 1.2.0 - 2026-09-22
 
 ### Fixed
