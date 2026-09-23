@@ -54,6 +54,16 @@ enum TLSFixture {
     hkV3aagavMXvITyQ83z3DA4=
     -----END PRIVATE KEY-----
     """
+  // Parsing the PEM pair is synchronous work, so every server shares one context built on first
+  // use. The result is kept rather than trapped so a bad fixture fails the test that reads it.
+  static let serverContext = Result { () throws -> NIOSSLContext in
+    try NIOSSLContext(
+      configuration: .makeServerConfiguration(
+        certificateChain: try NIOSSLCertificate.fromPEMBytes(Array(certificate.utf8)).map {
+          .certificate($0)
+        },
+        privateKey: .privateKey(try NIOSSLPrivateKey(bytes: Array(key.utf8), format: .pem))))
+  }
 
   static func client() throws -> TLSConfiguration {
     var configuration = TLSConfiguration.makeClientConfiguration()
@@ -62,12 +72,5 @@ enum TLSFixture {
     return configuration
   }
 
-  static func server() throws -> TLSConfiguration {
-    TLSConfiguration.makeServerConfiguration(
-      certificateChain: try NIOSSLCertificate.fromPEMBytes(Array(certificate.utf8)).map {
-        .certificate($0)
-      },
-      privateKey: .privateKey(try NIOSSLPrivateKey(bytes: Array(key.utf8), format: .pem)))
-  }
 }
 #endif

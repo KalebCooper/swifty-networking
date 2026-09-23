@@ -14,7 +14,6 @@ final class RawWebSocketServer: Sendable {
   let closed = WebSocketCompletion<Void>()
   let frames: AsyncStream<[UInt8]>
   private let frameSignal: AsyncStream<[UInt8]>.Continuation
-  private let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
   let head = WebSocketCompletion<String>()
   private let peers = Mutex<[any Channel]>([])
   let prefix = WebSocketCompletion<[UInt8]>()
@@ -29,8 +28,8 @@ final class RawWebSocketServer: Sendable {
   func start(
     initial: [UInt8] = [], response: String? = RawWebSocketServer.upgrade, tls: Bool = false
   ) async throws {
-    let context = try tls ? NIOSSLContext(configuration: TLSFixture.server()) : nil
-    let channel = try await ServerBootstrap(group: group)
+    let context = try tls ? TLSFixture.serverContext.get() : nil
+    let channel = try await ServerBootstrap(group: .singletonMultiThreadedEventLoopGroup)
       .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
       .childChannelInitializer { channel in
         self.peers.withLock { $0.append(channel) }
@@ -60,7 +59,6 @@ final class RawWebSocketServer: Sendable {
       try await channel.closeFuture.get()
     }
     frameSignal.finish()
-    try await group.shutdownGracefully()
   }
 
   private final class Handler: ChannelInboundHandler {
