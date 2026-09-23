@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `StubURLProtocol` and `StubURLProtocolFailure` are unavailable on watchOS. watchOS does not
+  support a custom `URLProtocol`, and a stubbed session there sent some requests, including ones
+  scripted to fail, to the real network.
 - `URLSessionTransport.send` from an already-cancelled task now fails with `cancelled` without
   sending, as `stream` does. It could previously return the response.
 - `HTTPPortable` now maps AsyncHTTPClient's Network.framework connection-refusal error to a

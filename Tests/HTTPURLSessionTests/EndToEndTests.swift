@@ -1,6 +1,7 @@
 // `URLSessionTransport` exists only where URLSession does, so this suite compiles away on other
-// platforms.
-#if canImport(Darwin)
+// platforms. It answers through `StubURLProtocol`, which is unavailable on watchOS, so it compiles
+// away there too.
+#if canImport(Darwin) && !os(watchOS)
 
 import Foundation
 import HTTPCore

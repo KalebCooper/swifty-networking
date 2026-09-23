@@ -43,6 +43,13 @@ import Synchronization
 /// one belongs to something else, such as a session a test built by hand or code that reached the
 /// network by mistake, and the loading system takes it to the real network, where it succeeds or
 /// fails visibly instead of being answered by a stub nobody pointed at it.
+///
+/// ## Availability
+///
+/// The stub is unavailable on watchOS, where the URL loading system does not support custom
+/// `URLProtocol` subclasses. A session there consults the stub for some requests and sends others,
+/// including ones scripted to fail, to the real network.
+@available(watchOS, unavailable)
 public final class StubURLProtocol: URLProtocol {
   /// What the stub does with one request.
   ///

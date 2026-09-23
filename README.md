@@ -473,6 +473,8 @@ import Testing
 - [swift-http-types](https://github.com/apple/swift-http-types) 1.6.0+
 - `HTTPCore`, `HTTPTesting`, and `HTTPPortable` build and test on Linux and on Android.
   `HTTPURLSession` is Darwin-only and compiles to an empty target elsewhere.
+- `StubURLProtocol` in `HTTPTesting` is unavailable on watchOS, which does not support a custom
+  `URLProtocol`.
 - An off-by-default `HTTPPortable` trait adds
   [async-http-client](https://github.com/swift-server/async-http-client) 1.36.1 and
   [swift-nio](https://github.com/apple/swift-nio) 2.102.0 and builds the `HTTPPortable` product over

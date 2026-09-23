@@ -1,6 +1,6 @@
-// `StubURLProtocol` exists only where URLSession's loading system does, so this suite compiles away
-// on other platforms.
-#if canImport(Darwin)
+// `StubURLProtocol` exists only where URLSession's loading system does, and watchOS does not support a
+// custom `URLProtocol`, so this suite compiles away everywhere else.
+#if canImport(Darwin) && !os(watchOS)
 
 import Foundation
 import HTTPTesting

@@ -21,6 +21,9 @@ import Foundation
 ///
 /// ``MockTransport`` reports its own failures as ``MockTransportFailure``, so a caught error always
 /// identifies which of the two produced it.
+///
+/// Like ``StubURLProtocol``, it is unavailable on watchOS.
+@available(watchOS, unavailable)
 public enum StubURLProtocolFailure: Error, CustomNSError, Hashable, Sendable {
   /// The scripted status and header fields do not form a response the URL loading system accepts:
   /// a status outside the range `HTTPURLResponse` represents, or a request with no URL to

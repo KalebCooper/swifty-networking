@@ -14,7 +14,7 @@ fixtures.
 | `RecordingClock` | the client's `Clock`, recording sleeps and resuming them on demand | yes |
 | `RecordingObserver` | ``TransportObserver``, with one ordered event log | yes |
 | `RecordingTokenProvider` | ``TokenProvider`` and ``TokenRefresher``, counting the refreshes asked for | yes |
-| `StubURLProtocol` | the loading system under a real `URLSession` | Apple platforms only |
+| `StubURLProtocol` | the loading system under a real `URLSession` | Apple platforms except watchOS |
 
 Each one is a `Sendable` `final class` over a single `Mutex`, never an `actor`, for the same reason
 nothing else in the package is one: the protocols they conform to are synchronous, and an actor
@@ -203,7 +203,8 @@ already carry one.
 actual `URLRequest` conversion, the actual upload-versus-data choice, and the actual `URLError`
 mapping. It is the one Apple-only file in `HTTPTesting`: the whole file sits inside
 `#if canImport(Darwin)`, so Linux and Android compile it out and the rest of the product stays
-portable.
+portable. It is unavailable on watchOS, where the URL loading system does not support a custom
+`URLProtocol`: a session there can send a request meant for the stub to the real network.
 
 The answers live on a `Script` the test holds, not on the protocol instance the loading system
 mints.
