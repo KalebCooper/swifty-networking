@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 1.3.1 - 2026-09-23
+
 ### Fixed
 
 - A socket accepted by `HummingbirdWebSocketAdapter` now keeps the first close frame its peer sends
